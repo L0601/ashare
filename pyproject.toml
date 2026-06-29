@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ashare"
+version = "0.1.0"
+description = "抖音财经博主视频金融观点抽取流水线"
+requires-python = ">=3.11"
+dependencies = [
+    "f2",                      # 抖音抓取（内置 X-Bogus 签名）
+    "httpx",                   # 视频下载
+    "openai>=1.0",             # 兼容 OpenAI 的 LLM 调用
+    "pydantic>=2",             # 数据模型
+    "pydantic-settings>=2",    # 配置加载
+    "pyyaml",                  # 读取 config.yaml
+    "apscheduler>=3.10",       # 定时轮询
+    "fastapi",                 # 只读看板
+    "uvicorn[standard]",       # ASGI 服务
+    "jinja2",                  # 模板渲染
+    "typer",                   # 命令行入口
+]
+
+[project.optional-dependencies]
+# ASR 推理后端：Apple Silicon 优先 MLX，transformers 为兜底
+asr-mlx = ["mlx", "mlx-audio", "librosa", "soundfile"]
+asr-transformers = ["torch", "transformers", "librosa", "soundfile", "accelerate"]
+dev = ["pytest", "pytest-asyncio"]
+
+[project.scripts]
+ashare = "ashare.cli:app"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+asyncio_default_fixture_loop_scope = "function"

@@ -1,0 +1,48 @@
+# 抖音金融观点抽取流水线 —— 配置模板
+# 复制为 config.yaml 后填入真实值。config.yaml 已被 .gitignore 忽略。
+
+douyin:
+  # 抖音网页版登录后的 Cookie（F12 -> Network -> 复制 Cookie 整串）。
+  # 公开内容理论上可游客访问，但带登录 Cookie 能显著降低触发风控的概率。
+  cookie: "PUT_YOUR_DOUYIN_COOKIE_HERE"
+  # 博主的 sec_uid。首次可用 `ashare resolve-author "创业魔法师"` 解析后回填。
+  author_sec_uid: ""
+  # 博主昵称（仅用于校验/展示；解析时用）。
+  author_name: "创业魔法师"
+  # 每次抓取最新视频条数
+  latest_count: 10
+  # User-Agent：必须是「桌面浏览器」UA，与 PC 网页 cookie、web 接口、桌面指纹保持一致。
+  # 最佳实践：用你复制 cookie 那个浏览器的真实 UA（F12 控制台输入 navigator.userAgent）。
+  user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36 Edg/130.0.0.0"
+
+llm:
+  # 兼容 OpenAI 的服务地址，如 DeepSeek: https://api.deepseek.com/v1
+  base_url: "https://api.deepseek.com/v1"
+  api_key: "PUT_YOUR_LLM_API_KEY_HERE"
+  model: "deepseek-chat"
+  # 单次请求超时（秒）与温度
+  timeout: 120
+  temperature: 0.2
+
+asr:
+  # 引擎：mlx（Apple Silicon 推荐） | transformers（兜底） | fake（测试用）
+  engine: "mlx"
+  # 模型名或本地路径
+  model: "Qwen/Qwen3-ASR-1.7B"
+  # 识别语言提示
+  language: "Chinese"
+
+schedule:
+  # 轮询间隔（分钟）。活跃博主建议 90~120，避免过频触发风控。
+  poll_interval_minutes: 90
+  # 单个网络请求之间的基础间隔与随机抖动（秒），错峰防风控。
+  request_min_seconds: 5
+  request_jitter_seconds: 3
+
+storage:
+  # 数据根目录（SQLite 与中间文件均在此）
+  data_dir: "data"
+
+web:
+  host: "127.0.0.1"
+  port: 8000

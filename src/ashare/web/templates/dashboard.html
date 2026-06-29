@@ -1,0 +1,627 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>抖音金融观点看板</title>
+<style>
+  /* ===== 设计令牌（ui-ux-pro-max: Dark OLED / 绿涨红跌）===== */
+  :root{
+    --bg:#020617; --primary:#0F172A; --secondary:#1E293B; --muted:#1A1E2F;
+    --border:#334155; --fg:#F8FAFC; --fg-dim:#94A3B8; --fg-faint:#64748B;
+    --accent:#22C55E; --danger:#EF4444; --warn:#F59E0B; --info:#38BDF8;
+    --radius:12px;
+    /* 离线自包含：用系统字体栈，数据列用等宽并启用等宽数字 */
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+    --mono:ui-monospace,"SF Mono","Menlo","Consolas",monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--sans);
+    font-size:14px;line-height:1.6;-webkit-font-smoothing:antialiased}
+  .num{font-family:var(--mono);font-variant-numeric:tabular-nums}
+  a{color:var(--info);text-decoration:none}
+
+  /* ===== 顶栏 ===== */
+  header{position:sticky;top:0;z-index:40;background:rgba(2,6,23,.85);
+    backdrop-filter:blur(8px);border-bottom:1px solid var(--border);
+    padding:14px 22px;display:flex;align-items:center;gap:14px}
+  header h1{font-size:16px;margin:0;font-weight:600;letter-spacing:.3px;
+    display:flex;align-items:center;gap:9px}
+  header .dot{width:8px;height:8px;border-radius:50%;background:var(--accent);
+    box-shadow:0 0 10px var(--accent)}
+  header .spacer{flex:1}
+  .refresh{display:flex;align-items:center;gap:8px;color:var(--fg-dim);font-size:12.5px}
+  .refresh button{background:var(--secondary);color:var(--fg);border:1px solid var(--border);
+    border-radius:8px;padding:6px 12px;cursor:pointer;font-size:12.5px;
+    display:flex;align-items:center;gap:6px;transition:background .2s,border-color .2s}
+  .refresh button:hover{background:#243049;border-color:#475569}
+  .refresh button:focus-visible{outline:2px solid var(--info);outline-offset:2px}
+  /* 拉取按钮用主色强调，是看板上唯一的"动作"按钮 */
+  #pullBtn{background:var(--accent);color:#04130a;border-color:var(--accent);font-weight:600}
+  #pullBtn:hover{background:#16a34a;border-color:#16a34a}
+  #pullBtn:disabled{background:var(--secondary);color:var(--fg-faint);border-color:var(--border);
+    cursor:progress;font-weight:400}
+  .updated{color:var(--fg-faint)}
+  /* 自动拉取开关 */
+  .switch{display:inline-flex;align-items:center;gap:8px;cursor:pointer;user-select:none;position:relative}
+  .switch input{position:absolute;opacity:0;width:0;height:0}
+  .switch .track{display:inline-block;width:38px;height:22px;border-radius:11px;background:var(--secondary);
+    border:1px solid var(--border);position:relative;transition:background .2s,border-color .2s;flex-shrink:0}
+  .switch .thumb{position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;
+    background:var(--fg-faint);transition:transform .2s,background .2s}
+  .switch input:checked + .track{background:rgba(34,197,94,.25);border-color:var(--accent)}
+  .switch input:checked + .track .thumb{transform:translateX(16px);background:var(--accent)}
+  .switch input:focus-visible + .track{outline:2px solid var(--info);outline-offset:2px}
+  .switch-label{font-size:12.5px;color:var(--fg-dim)}
+  .switch-label.on{color:var(--accent)}
+  /* 顶栏只读状态提示：自动拉取开启时显示 */
+  .auto-ind{font-size:12px;color:#86EFAC;background:#0c2417;border:1px solid #166534;
+    border-radius:20px;padding:3px 10px;display:inline-flex;align-items:center;gap:6px}
+  .auto-ind::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--accent);
+    box-shadow:0 0 8px var(--accent)}
+
+  main{max-width:1280px;margin:0 auto;padding:22px}
+
+  /* ===== 统计卡 ===== */
+  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));
+    gap:14px;margin-bottom:22px}
+  .card{background:linear-gradient(180deg,var(--primary),#0b1426);
+    border:1px solid var(--border);border-radius:var(--radius);padding:16px 18px}
+  .card .label{color:var(--fg-dim);font-size:12px;margin-bottom:6px;
+    display:flex;align-items:center;gap:7px}
+  .card .value{font-size:28px;font-weight:700}
+  .card.ok .value{color:var(--accent)} .card.run .value{color:var(--info)}
+  .card.fail .value{color:var(--danger)} .card.op .value{color:var(--warn)}
+  svg{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:2;
+    stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
+
+  /* ===== 视频列表 ===== */
+  .section-title{font-size:13px;color:var(--fg-dim);text-transform:uppercase;
+    letter-spacing:1px;margin:0 0 12px}
+  .rows{display:flex;flex-direction:column;gap:10px}
+  .row{background:var(--primary);border:1px solid var(--border);border-radius:var(--radius);
+    padding:14px 16px;cursor:pointer;transition:border-color .2s,transform .15s,background .2s;
+    display:grid;grid-template-columns:1fr auto;gap:10px 16px;align-items:center}
+  .row:hover{border-color:#475569;background:#0d1830}
+  .row:focus-visible{outline:2px solid var(--info);outline-offset:2px}
+  .row .title{font-size:14.5px;font-weight:600;margin:0 0 5px;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:62vw}
+  .row .meta{color:var(--fg-faint);font-size:12px;display:flex;gap:14px;flex-wrap:wrap}
+  .row .meta b{color:var(--fg-dim);font-weight:500}
+
+  /* 阶段徽章 */
+  .stages{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+  .badge{font-size:11px;padding:3px 9px;border-radius:20px;border:1px solid var(--border);
+    color:var(--fg-dim);background:var(--muted);white-space:nowrap;display:inline-flex;
+    align-items:center;gap:5px}
+  .badge::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--fg-faint)}
+  .badge.success{color:#86EFAC;border-color:#166534;background:#0c2417}
+  .badge.success::before{background:var(--accent)}
+  .badge.running{color:#7DD3FC;border-color:#0c4a6e;background:#082234}
+  .badge.running::before{background:var(--info);animation:pulse 1.2s infinite}
+  .badge.failed{color:#FCA5A5;border-color:#7f1d1d;background:#2a0f0f}
+  .badge.failed::before{background:var(--danger)}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+
+  .pill{font-size:11px;padding:2px 8px;border-radius:6px;background:var(--secondary);
+    color:var(--fg-dim);border:1px solid var(--border)}
+
+  /* ===== 详情抽屉 ===== */
+  .scrim{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:50;opacity:0;
+    pointer-events:none;transition:opacity .25s}
+  .scrim.open{opacity:1;pointer-events:auto}
+  .drawer{position:fixed;top:0;right:0;height:100%;width:min(720px,94vw);z-index:60;
+    background:var(--bg);border-left:1px solid var(--border);transform:translateX(100%);
+    transition:transform .28s cubic-bezier(.22,1,.36,1);overflow-y:auto;overflow-x:hidden;
+    box-shadow:-20px 0 50px rgba(0,0,0,.5)}
+  .drawer.open{transform:translateX(0)}
+  .drawer .dhead{position:sticky;top:0;background:rgba(2,6,23,.92);backdrop-filter:blur(8px);
+    border-bottom:1px solid var(--border);padding:16px 20px;display:flex;align-items:flex-start;gap:12px}
+  .drawer .dhead h2{font-size:15.5px;margin:0 0 6px;line-height:1.45}
+  .drawer .dbody{padding:20px}
+  .close{background:var(--secondary);border:1px solid var(--border);color:var(--fg);
+    border-radius:8px;width:32px;height:32px;cursor:pointer;flex-shrink:0;
+    display:flex;align-items:center;justify-content:center}
+  .close:hover{background:#243049}
+  .close:focus-visible{outline:2px solid var(--info);outline-offset:2px}
+
+  .block{margin-bottom:22px}
+  .block > h3{font-size:12px;color:var(--fg-dim);text-transform:uppercase;letter-spacing:1px;
+    margin:0 0 10px;display:flex;align-items:center;gap:7px}
+
+  /* 阶段时间线 */
+  .timeline{display:flex;flex-direction:column;gap:0}
+  .tl{display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid #1e2942}
+  .tl:last-child{border-bottom:none}
+  .tl .nm{width:80px;color:var(--fg-dim)}
+  .tl .err{color:#FCA5A5;font-size:12px;font-family:var(--mono)}
+  .tl .ts{margin-left:auto;color:var(--fg-faint);font-size:12px}
+
+  /* 观点表 */
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th,td{text-align:left;padding:9px 10px;border-bottom:1px solid #1e2942;vertical-align:top}
+  th{color:var(--fg-dim);font-weight:500;font-size:11.5px;text-transform:uppercase;letter-spacing:.5px}
+  .stance{font-weight:600;font-size:12px;padding:2px 9px;border-radius:6px;white-space:nowrap}
+  .stance.bullish{color:#86EFAC;background:#0c2417;border:1px solid #166534}
+  .stance.bearish{color:#FCA5A5;background:#2a0f0f;border:1px solid #7f1d1d}
+  .stance.neutral{color:#FCD34D;background:#2a210a;border:1px solid #78510f}
+  .conf{display:flex;align-items:center;gap:7px}
+  .conf .bar{width:48px;height:5px;border-radius:3px;background:var(--secondary);overflow:hidden}
+  .conf .bar i{display:block;height:100%;background:var(--accent)}
+  .tag{display:inline-block;font-size:11px;color:var(--fg-faint)}
+
+  /* 折叠区 */
+  details{background:var(--primary);border:1px solid var(--border);border-radius:10px;
+    padding:0 14px;margin-bottom:10px}
+  details summary{cursor:pointer;padding:12px 0;color:var(--fg-dim);font-size:13px;
+    list-style:none;display:flex;align-items:center;gap:8px;user-select:none}
+  details summary::-webkit-details-marker{display:none}
+  details[open] summary{border-bottom:1px solid var(--border)}
+  details .content{padding:14px 0;white-space:pre-wrap;word-break:break-word;
+    font-family:var(--mono);font-size:12.5px;color:#CBD5E1;line-height:1.7;max-height:420px;overflow:auto}
+
+  /* 每行删除按钮：右侧常驻、低强调，hover/focus 转危险色；足够触达面积 */
+  .row{grid-template-columns:1fr auto auto}
+  .row-del{width:36px;height:36px;border-radius:8px;background:transparent;border:1px solid transparent;
+    color:var(--fg-faint);cursor:pointer;display:flex;align-items:center;justify-content:center;
+    flex-shrink:0;transition:background .15s,color .15s,border-color .15s}
+  .row-del:hover,.row-del:focus-visible{background:#2a0f0f;border-color:#7f1d1d;color:#FCA5A5;outline:none}
+  .row-del svg{width:17px;height:17px}
+
+  /* 确认弹窗（居中 alertdialog，用于删除/清空等破坏性操作）*/
+  .cdialog{position:fixed;inset:0;z-index:70;display:flex;align-items:center;justify-content:center;
+    background:rgba(0,0,0,.6);opacity:0;pointer-events:none;transition:opacity .2s}
+  .cdialog.open{opacity:1;pointer-events:auto}
+  .cbox{background:var(--primary);border:1px solid var(--border);border-radius:14px;padding:22px 24px;
+    width:min(400px,90vw);box-shadow:0 24px 60px rgba(0,0,0,.5);transform:scale(.96);transition:transform .2s}
+  .cdialog.open .cbox{transform:scale(1)}
+  .cbox h3{margin:0 0 8px;font-size:16px}
+  .cbox p{margin:0 0 20px;color:var(--fg-dim);font-size:13.5px;line-height:1.6;word-break:break-word}
+  .cactions{display:flex;justify-content:flex-end;gap:10px}
+  .btn.danger-solid{background:var(--danger);color:#fff;border-color:var(--danger);font-weight:600}
+  .btn.danger-solid:hover{background:#dc2626}
+
+  /* 轻量 toast 成功提示 */
+  .toast{position:fixed;left:50%;bottom:28px;transform:translateX(-50%) translateY(12px);z-index:80;
+    background:var(--secondary);border:1px solid var(--border);color:var(--fg);padding:10px 18px;
+    border-radius:10px;font-size:13px;opacity:0;pointer-events:none;transition:opacity .2s,transform .2s;
+    box-shadow:0 10px 30px rgba(0,0,0,.4)}
+  .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+  .toast.ok{border-color:#166534}
+
+  /* 设置表单 */
+  .field{margin-bottom:16px}
+  .field label{display:block;font-size:12.5px;color:var(--fg-dim);margin-bottom:6px}
+  .field input,.field textarea{width:100%;background:var(--secondary);border:1px solid var(--border);
+    border-radius:8px;color:var(--fg);padding:9px 11px;font-size:13px;font-family:var(--sans)}
+  .field textarea{min-height:74px;resize:vertical;font-family:var(--mono);font-size:12px;line-height:1.5}
+  .field input:focus,.field textarea:focus{outline:none;border-color:var(--info)}
+  .field .hint{font-size:11px;color:var(--fg-faint);margin-top:5px}
+  .field .row2{display:flex;gap:8px}
+  .field .row2 input{flex:1;min-width:0}
+  .btn{background:var(--secondary);color:var(--fg);border:1px solid var(--border);border-radius:8px;
+    padding:9px 14px;cursor:pointer;font-size:13px;transition:background .15s,border-color .15s}
+  .btn:hover{background:#243049;border-color:#475569}
+  .btn:focus-visible{outline:2px solid var(--info);outline-offset:2px}
+  .btn.primary{background:var(--accent);color:#04130a;border-color:var(--accent);font-weight:600}
+  .btn.primary:hover{background:#16a34a}
+  .btn.danger{background:transparent;color:#FCA5A5;border-color:#7f1d1d}
+  .btn.danger:hover{background:#2a0f0f}
+  .secuid-result{font-size:12.5px;margin-top:8px;padding:8px 10px;border-radius:8px}
+  .secuid-result.ok{background:#0c2417;border:1px solid #166534;color:#86EFAC}
+  .secuid-result.err{background:#2a0f0f;border:1px solid #7f1d1d;color:#FCA5A5}
+  .save-msg{font-size:12.5px;margin-left:10px}
+  .save-msg.ok{color:var(--accent)} .save-msg.err{color:#FCA5A5}
+
+  .empty{color:var(--fg-faint);text-align:center;padding:60px 20px;font-size:14px}
+  .summary-box{background:var(--secondary);border:1px solid var(--border);border-radius:10px;
+    padding:14px 16px;color:#E2E8F0;line-height:1.7}
+
+  @media (max-width:640px){
+    .row .title{max-width:100%}
+    .row{grid-template-columns:1fr}
+    .stages{justify-content:flex-start}
+  }
+  @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+<header>
+  <h1><span class="dot" aria-hidden="true"></span>抖音金融观点看板</h1>
+  <span class="spacer"></span>
+  <div class="refresh">
+    <span class="auto-ind" id="autoIndicator" hidden></span>
+    <span class="updated" id="pullStatus"></span>
+    <span class="updated" id="updated">—</span>
+    <button id="pullBtn" aria-label="拉取并处理最新视频">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M5 21h14"/></svg>
+      拉取最新
+    </button>
+    <button id="refreshBtn" aria-label="刷新数据">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>
+      刷新
+    </button>
+    <button id="settingsBtn" aria-label="打开设置">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      设置
+    </button>
+  </div>
+</header>
+
+<main>
+  <div class="stats" id="stats"></div>
+  <h2 class="section-title">视频处理列表</h2>
+  <div class="rows" id="rows"><div class="empty">加载中…</div></div>
+</main>
+
+<div class="scrim" id="scrim"></div>
+<aside class="drawer" id="drawer" role="dialog" aria-modal="true" aria-label="视频分析详情">
+  <div class="dhead">
+    <div style="flex:1">
+      <h2 id="dTitle">—</h2>
+      <div class="row-meta" id="dMeta" style="color:var(--fg-faint);font-size:12px"></div>
+    </div>
+    <button class="close" id="closeBtn" aria-label="关闭">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
+    </button>
+  </div>
+  <div class="dbody" id="dBody"></div>
+</aside>
+
+<aside class="drawer" id="settingsDrawer" role="dialog" aria-modal="true" aria-label="设置">
+  <div class="dhead">
+    <div style="flex:1">
+      <h2>设置</h2>
+      <div style="color:var(--fg-faint);font-size:12px">运行时配置存数据库，保存后即时生效（UA、LLM 等固化项在 config.yaml）</div>
+    </div>
+    <button class="close" id="settingsClose" aria-label="关闭">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
+    </button>
+  </div>
+  <div class="dbody">
+    <div class="block"><h3>抓取与拉取配置</h3>
+      <div id="settingsForm"></div>
+      <div class="field">
+        <label class="switch" title="开启后看板打开期间按间隔自动拉取">
+          <input type="checkbox" id="autoToggle">
+          <span class="track"><span class="thumb"></span></span>
+          <span class="switch-label">自动拉取</span>
+        </label>
+        <div class="hint" id="autoHint">关闭。开启后，看板打开期间按「轮询间隔」自动拉取（关页面即停）。</div>
+      </div>
+    </div>
+    <div class="block">
+      <button class="btn primary" id="settingsSave">保存设置</button>
+      <span class="save-msg" id="saveMsg"></span>
+    </div>
+    <div class="block"><h3>数据管理</h3>
+      <p class="tag" style="margin:0 0 10px">清空会删除所有视频记录与已下载的中间文件（不影响上面的配置）。</p>
+      <button class="btn danger" id="clearAllBtn">清空所有数据</button>
+    </div>
+  </div>
+</aside>
+
+<div class="cdialog" id="confirmDialog" role="alertdialog" aria-modal="true" aria-labelledby="cdTitle">
+  <div class="cbox">
+    <h3 id="cdTitle">确认</h3>
+    <p id="cdMsg"></p>
+    <div class="cactions">
+      <button class="btn" id="cdCancel">取消</button>
+      <button class="btn danger-solid" id="cdOk">删除</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+"use strict";
+const STAGE_LABELS={discover:"发现",download:"下载",extract_audio:"抽音轨",transcribe:"转写",extract:"抽取观点"};
+const STANCE_LABELS={bullish:"看多",bearish:"看空",neutral:"中性"};
+const TYPE_LABELS={stock:"个股",industry:"行业"};
+const esc=s=>String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+
+const icons={
+  total:'<svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>',
+  ok:'<svg viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg>',
+  run:'<svg viewBox="0 0 24 24"><path d="M12 2v4m0 12v4m10-10h-4M6 12H2"/></svg>',
+  fail:'<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M15 9l-6 6M9 9l6 6"/></svg>',
+  op:'<svg viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="M7 14l4-4 3 3 5-6"/></svg>'
+};
+
+async function fetchJSON(url){const r=await fetch(url);if(!r.ok)throw new Error(r.status);return r.json();}
+
+function renderStats(s){
+  const cards=[
+    ["total","总视频",s.total,icons.total],
+    ["ok","已完成",s.success,icons.ok],
+    ["run","处理中",s.running,icons.run],
+    ["fail","失败",s.failed,icons.fail],
+    ["op","金融观点",s.opinions,icons.op],
+  ];
+  document.getElementById("stats").innerHTML=cards.map(([c,l,v,ic])=>
+    `<div class="card ${c}"><div class="label">${ic}${l}</div><div class="value num">${v||0}</div></div>`).join("");
+}
+
+function stageBadges(stages){
+  return `<div class="stages">`+stages.map(st=>
+    `<span class="badge ${st.status}">${STAGE_LABELS[st.stage]||st.stage}</span>`).join("")+`</div>`;
+}
+
+function renderRows(videos){
+  const el=document.getElementById("rows");
+  if(!videos.length){el.innerHTML='<div class="empty">暂无数据。请先运行 <code>ashare run-once</code> 抓取并分析视频。</div>';return;}
+  el.innerHTML=videos.map(v=>{
+    const sectors=(v.sectors||[]).slice(0,4).map(s=>`<span class="pill">${esc(s)}</span>`).join(" ");
+    return `<div class="row" tabindex="0" role="button" data-id="${esc(v.aweme_id)}">
+      <div>
+        <p class="title">${esc(v.title)}</p>
+        <div class="meta">
+          <span><b>发布</b> <span class="num">${esc(v.publish_time)}</span></span>
+          <span><b>观点</b> <span class="num">${v.opinion_count}</span> 条</span>
+          ${sectors?`<span>${sectors}</span>`:""}
+        </div>
+      </div>
+      ${stageBadges(v.stages)}
+      <button class="row-del" data-del="${esc(v.aweme_id)}" data-title="${esc(v.title)}"
+        aria-label="删除该视频" title="删除该视频">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6"/></svg>
+      </button>
+    </div>`;
+  }).join("");
+  el.querySelectorAll(".row").forEach(r=>{
+    const open=()=>openDetail(r.dataset.id);
+    r.addEventListener("click",open);
+    r.addEventListener("keydown",e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();open();}});
+  });
+  el.querySelectorAll(".row-del").forEach(b=>{
+    b.addEventListener("click",e=>{
+      e.stopPropagation();   // 不触发打开详情
+      openConfirm({title:"删除该视频?", msg:`将删除「${b.dataset.title||b.dataset.del}」的所有记录与已下载文件，不可恢复。`,
+        okLabel:"删除", onOk:()=>deleteVideo(b.dataset.del)});
+    });
+  });
+}
+
+function opinionsTable(ops){
+  if(!ops.length)return '<p class="tag">本视频未抽取到明确的行业/个股观点。</p>';
+  return `<table><thead><tr><th>标的</th><th>类型</th><th>方向</th><th>信心</th><th>核心逻辑</th></tr></thead><tbody>`+
+    ops.map(o=>{
+      const conf=Math.round((o.confidence||0)*100);
+      const code=o.target_code?` <span class="tag num">${esc(o.target_code)}</span>`:"";
+      return `<tr>
+        <td><b>${esc(o.target_name)}</b>${code}${o.quote?`<div class="tag" style="margin-top:4px">“${esc(o.quote)}”</div>`:""}</td>
+        <td><span class="tag">${TYPE_LABELS[o.target_type]||o.target_type}</span></td>
+        <td><span class="stance ${o.stance}">${STANCE_LABELS[o.stance]||o.stance}</span></td>
+        <td><div class="conf"><div class="bar"><i style="width:${conf}%"></i></div><span class="num">${conf}%</span></div></td>
+        <td>${esc(o.logic)}</td>
+      </tr>`;
+    }).join("")+`</tbody></table>`;
+}
+
+function timeline(stages){
+  return `<div class="timeline">`+stages.map(st=>
+    `<div class="tl"><span class="nm">${STAGE_LABELS[st.stage]||st.stage}</span>
+      <span class="badge ${st.status}">${st.status}</span>
+      ${st.error?`<span class="err">${esc(st.error)}</span>`:""}
+      <span class="ts num">${esc(st.finished_at)}</span></div>`).join("")+`</div>`;
+}
+
+async function openDetail(id){
+  const d=await fetchJSON("/api/videos/"+encodeURIComponent(id));
+  document.getElementById("dTitle").textContent=d.title;
+  document.getElementById("dMeta").innerHTML=
+    `发布 <span class="num">${esc(d.publish_time)}</span> · 抽取 <span class="num">${esc(d.analysis_time)}</span>
+     · 模型 ${esc(d.llm_model||"—")} · <a href="${esc(d.video_url)}" target="_blank" rel="noopener">原视频 ↗</a>`;
+  const summary=d.summary?`<div class="summary-box">${esc(d.summary)}</div>`:'<p class="tag">无摘要</p>';
+  document.getElementById("dBody").innerHTML=`
+    <div class="block"><h3>处理阶段</h3>${timeline(d.stages)}</div>
+    <div class="block"><h3>整体观点摘要</h3>${summary}</div>
+    <div class="block"><h3>金融观点（${d.opinions.length}）</h3>${opinionsTable(d.opinions)}</div>
+    <div class="block"><h3>原文与 AI 留痕</h3>
+      <details><summary>转写文字（音频 ${Math.round(d.audio_seconds||0)}s）</summary><div class="content">${esc(d.transcript||"（无）")}</div></details>
+      <details><summary>AI 输入（Prompt）</summary><div class="content">${esc(d.prompt_input||"（无）")}</div></details>
+      <details><summary>AI 原始输出</summary><div class="content">${esc(d.raw_output||"（无）")}</div></details>
+    </div>`;
+  document.getElementById("scrim").classList.add("open");
+  document.getElementById("drawer").classList.add("open");
+  document.getElementById("closeBtn").focus();
+}
+
+function closeDetail(){
+  document.getElementById("scrim").classList.remove("open");
+  document.getElementById("drawer").classList.remove("open");
+}
+
+function renderPull(p){
+  // 根据后台拉取状态驱动按钮与提示（刷新页面/多标签也能恢复"拉取中"态）
+  const btn=document.getElementById("pullBtn");
+  const status=document.getElementById("pullStatus");
+  if(!p){btn.disabled=false;return;}
+  btn.disabled=!!p.running;
+  btn.lastChild.textContent= p.running ? " 拉取中…" : " 拉取最新";
+  if(p.running){status.textContent="拉取中…";}
+  else if(p.last_error){status.textContent="拉取失败："+esc(p.last_error).slice(0,40);}
+  else if(p.last_result){status.textContent=`上次拉取：新增${p.last_result.new||0} 处理${p.last_result.processed||0}`;}
+  else{status.textContent="";}
+}
+
+// ===== 自动拉取（前端定时驱动；serve 自身不轮询抖音）=====
+let autoEnabled=false, autoIntervalMs=0, lastAutoPull=0;
+function renderAuto(a){
+  if(!a)return;
+  autoEnabled=a.enabled; autoIntervalMs=(a.interval_minutes||90)*60000;
+  // 顶栏只读提示（开启才显示，让用户一眼看到状态）
+  const ind=document.getElementById("autoIndicator");
+  ind.hidden=!a.enabled;
+  ind.textContent=`自动拉取 · 每${a.interval_minutes}分钟`;
+  // 抽屉里的开关与说明（抽屉打开时同步）
+  const tog=document.getElementById("autoToggle"); if(tog)tog.checked=a.enabled;
+  const hint=document.getElementById("autoHint");
+  if(hint)hint.textContent = a.enabled
+    ? `已开启：看板打开期间每 ${a.interval_minutes} 分钟自动拉取一次（关页面即停）。`
+    : "关闭。开启后，看板打开期间按「轮询间隔」自动拉取（关页面即停）。";
+  maybeAutoPull();
+}
+function maybeAutoPull(){
+  if(!autoEnabled){lastAutoPull=0;return;}
+  const now=Date.now();
+  if(lastAutoPull===0){lastAutoPull=now;return;}      // 首次只记基线，不立刻拉
+  if(now-lastAutoPull>=autoIntervalMs){lastAutoPull=now; pull();}
+}
+async function toggleAuto(on){
+  try{
+    await fetch("/api/auto-pull",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({enabled:on})});
+    if(on){lastAutoPull=Date.now(); toast("自动拉取已开启"); pull();}  // 开启即拉一次
+    else{toast("自动拉取已关闭");}
+  }finally{load();}
+}
+
+let _loading=false;
+async function load(){
+  if(_loading)return;            // in-flight 防叠加：上次未返回不再发起
+  _loading=true;
+  try{
+    const data=await fetchJSON("/api/videos");
+    renderStats(data.stats); renderRows(data.videos); renderPull(data.pull); renderAuto(data.auto);
+    const t=new Date();
+    document.getElementById("updated").textContent="更新于 "+t.toLocaleTimeString("zh-CN");
+  }catch(e){document.getElementById("rows").innerHTML='<div class="empty">加载失败：'+esc(e.message)+'</div>';}
+  finally{_loading=false;}
+}
+
+async function pull(){
+  const btn=document.getElementById("pullBtn");
+  btn.disabled=true;
+  try{
+    const r=await fetch("/api/pull",{method:"POST"});
+    const d=await r.json();
+    renderPull(d.pull);
+    if(!d.started){document.getElementById("pullStatus").textContent="已在拉取中…";}
+  }catch(e){document.getElementById("pullStatus").textContent="触发失败："+esc(e.message);}
+  load();   // 立即刷新一次
+}
+
+// ===== 居中确认弹窗（破坏性操作）=====
+let _confirmOk=null;
+function openConfirm({title,msg,okLabel,onOk}){
+  document.getElementById("cdTitle").textContent=title;
+  document.getElementById("cdMsg").textContent=msg;
+  document.getElementById("cdOk").textContent=okLabel||"删除";
+  _confirmOk=onOk;
+  document.getElementById("confirmDialog").classList.add("open");
+  document.getElementById("cdCancel").focus();
+}
+function closeConfirm(){document.getElementById("confirmDialog").classList.remove("open");_confirmOk=null;}
+
+// ===== 轻量成功提示 =====
+let _toastTimer=null;
+function toast(msg){
+  const t=document.getElementById("toast");
+  t.textContent=msg; t.className="toast ok show";
+  clearTimeout(_toastTimer);
+  _toastTimer=setTimeout(()=>{t.className="toast";},2500);
+}
+
+// ===== 设置抽屉 =====
+function fieldHtml(s){
+  const v=s.value==null?"":s.value;
+  if(s.secret) return `<div class="field"><label>${esc(s.label)}</label>
+    <textarea id="set_${s.key}" placeholder="留空则不修改">${esc(v)}</textarea></div>`;
+  if(s.key==="author_sec_uid") return `<div class="field"><label>${esc(s.label)}</label>
+    <div class="row2"><input id="set_${s.key}" value="${esc(v)}" placeholder="MS4w… 或粘贴主页链接">
+    <button class="btn" id="validateSecuid">校验</button></div>
+    <div class="hint">可粘贴博主主页链接，点校验自动解析并确认账号</div>
+    <div id="secuidResult"></div></div>`;
+  const t=s.type==="int"?"number":"text";
+  return `<div class="field"><label>${esc(s.label)}</label>
+    <input id="set_${s.key}" type="${t}" value="${esc(v)}"></div>`;
+}
+
+let _specs=[];
+async function openSettings(){
+  const data=await fetchJSON("/api/settings");
+  _specs=data.settings;
+  document.getElementById("settingsForm").innerHTML=_specs.map(fieldHtml).join("");
+  document.getElementById("saveMsg").textContent="";
+  document.getElementById("validateSecuid").addEventListener("click",validateSecuid);
+  document.getElementById("scrim").classList.add("open");
+  document.getElementById("settingsDrawer").classList.add("open");
+}
+
+function collectSettings(){
+  const out={};
+  _specs.forEach(s=>{
+    const el=document.getElementById("set_"+s.key); if(!el)return;
+    const val=el.value.trim();
+    if(s.secret && val==="")return;        // 密文留空=不改
+    out[s.key]= s.type==="int" ? val : val;
+  });
+  return out;
+}
+
+async function saveSettings(){
+  const msg=document.getElementById("saveMsg");
+  msg.className="save-msg"; msg.textContent="保存中…";
+  try{
+    const r=await fetch("/api/settings",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify(collectSettings())});
+    const d=await r.json();
+    if(!r.ok){msg.className="save-msg err";msg.textContent=d.error||"保存失败";return;}
+    msg.className="save-msg ok";msg.textContent="已保存 ✓";
+    load();
+  }catch(e){msg.className="save-msg err";msg.textContent="保存失败："+esc(e.message);}
+}
+
+async function validateSecuid(){
+  const box=document.getElementById("secuidResult");
+  const val=document.getElementById("set_author_sec_uid").value.trim();
+  box.className="secuid-result"; box.textContent="校验中…";
+  try{
+    const r=await fetch("/api/settings/validate-secuid",{method:"POST",
+      headers:{"Content-Type":"application/json"},body:JSON.stringify({value:val})});
+    const d=await r.json();
+    if(!r.ok){box.className="secuid-result err";box.textContent="✗ "+esc(d.error);return;}
+    box.className="secuid-result ok";
+    box.textContent=`✓ 已绑定：${esc(d.nickname)}（${d.aweme_count} 作品）`;
+    document.getElementById("set_author_sec_uid").value=d.sec_uid;  // 回填解析出的 sec_uid
+  }catch(e){box.className="secuid-result err";box.textContent="✗ 校验失败："+esc(e.message);}
+}
+
+async function deleteVideo(id){
+  try{await fetch("/api/videos/"+encodeURIComponent(id),{method:"DELETE"});toast("已删除该视频");}
+  finally{load();}
+}
+async function clearAll(){
+  try{await fetch("/api/videos",{method:"DELETE"});toast("已清空所有数据");}
+  finally{load();}
+}
+
+function closeDrawers(){
+  document.getElementById("scrim").classList.remove("open");
+  document.getElementById("drawer").classList.remove("open");
+  document.getElementById("settingsDrawer").classList.remove("open");
+}
+
+document.getElementById("pullBtn").addEventListener("click",pull);
+document.getElementById("refreshBtn").addEventListener("click",load);
+document.getElementById("settingsBtn").addEventListener("click",openSettings);
+document.getElementById("settingsClose").addEventListener("click",closeDrawers);
+document.getElementById("settingsSave").addEventListener("click",saveSettings);
+document.getElementById("autoToggle").addEventListener("change",e=>toggleAuto(e.target.checked));
+document.getElementById("clearAllBtn").addEventListener("click",()=>openConfirm({
+  title:"清空所有数据?", msg:"将删除全部视频记录与已下载的中间文件（不影响 cookie/sec_uid 等配置），不可恢复。",
+  okLabel:"清空", onOk:clearAll}));
+document.getElementById("cdCancel").addEventListener("click",closeConfirm);
+document.getElementById("cdOk").addEventListener("click",()=>{const f=_confirmOk;closeConfirm();if(f)f();});
+document.getElementById("confirmDialog").addEventListener("click",e=>{
+  if(e.target.id==="confirmDialog")closeConfirm();});  // 点遮罩取消
+document.getElementById("closeBtn").addEventListener("click",closeDrawers);
+document.getElementById("scrim").addEventListener("click",closeDrawers);
+document.addEventListener("keydown",e=>{if(e.key==="Escape"){closeConfirm();closeDrawers();}});
+load();
+setInterval(load,2000);  // 每 2s 自动刷新（仅读本地库，不碰抖音）
+</script>
+</body>
+</html>

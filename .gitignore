@@ -1,0 +1,28 @@
+# 敏感/可变配置（含 cookie、api_key），不进 git
+config.yaml
+.env
+
+# 运行数据与中间文件
+data/
+*.db
+*.db-journal
+
+# F2 运行日志
+logs/
+
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# 模型缓存
+models/
+
+# 计划文档（按团队约定不入 git）
+docs/
