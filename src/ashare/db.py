@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS videos (
     title TEXT NOT NULL,
     video_url TEXT NOT NULL,
     publish_time INTEGER NOT NULL,
+    author_name TEXT DEFAULT '',
     cover_url TEXT DEFAULT '',
     duration_ms INTEGER DEFAULT 0,
     overall_status TEXT NOT NULL DEFAULT 'pending',
@@ -105,7 +106,14 @@ class Database:
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.execute("PRAGMA busy_timeout=5000")
         self.conn.executescript(SCHEMA)
+        self._migrate()
         self.conn.commit()
+
+    def _migrate(self) -> None:
+        """轻量迁移：给老库补上后加的列（IF NOT EXISTS 建表不会改既有表结构）。"""
+        cols = {r["name"] for r in self.conn.execute("PRAGMA table_info(videos)")}
+        if "author_name" not in cols:
+            self.conn.execute("ALTER TABLE videos ADD COLUMN author_name TEXT DEFAULT ''")
 
     def close(self) -> None:
         self.conn.close()
@@ -126,17 +134,18 @@ class Database:
         now = self._clock()
         self.conn.execute(
             """INSERT INTO videos (aweme_id, author_sec_uid, title, video_url,
-                   publish_time, cover_url, duration_ms, overall_status,
+                   publish_time, author_name, cover_url, duration_ms, overall_status,
                    discovered_at, updated_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?)
                ON CONFLICT(aweme_id) DO UPDATE SET
                    -- 抖音 desc 为空时不要覆盖已有标题（如 LLM 回填的标题），否则重复 discover 会抹掉它
                    title=CASE WHEN excluded.title <> '' THEN excluded.title ELSE videos.title END,
+                   author_name=CASE WHEN excluded.author_name <> '' THEN excluded.author_name ELSE videos.author_name END,
                    video_url=excluded.video_url,
                    cover_url=excluded.cover_url, duration_ms=excluded.duration_ms,
                    updated_at=excluded.updated_at""",
             (v.aweme_id, v.author_sec_uid, v.title, v.video_url, v.publish_time,
-             v.cover_url, v.duration_ms, v.overall_status.value, now, now),
+             v.author_name, v.cover_url, v.duration_ms, v.overall_status.value, now, now),
         )
         self.conn.commit()
 
@@ -328,7 +337,8 @@ def _row_to_video(row: sqlite3.Row) -> Video:
     return Video(
         aweme_id=row["aweme_id"], author_sec_uid=row["author_sec_uid"],
         title=row["title"], video_url=row["video_url"],
-        publish_time=row["publish_time"], cover_url=row["cover_url"],
+        publish_time=row["publish_time"], author_name=row["author_name"],
+        cover_url=row["cover_url"],
         duration_ms=row["duration_ms"], overall_status=Status(row["overall_status"]),
         discovered_at=row["discovered_at"], updated_at=row["updated_at"],
     )

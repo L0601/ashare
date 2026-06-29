@@ -54,6 +54,12 @@ class WebConfig(BaseModel):
     port: int = 8000
 
 
+class TelegramConfig(BaseModel):
+    enabled: bool = False
+    bot_token: str = ""
+    chat_id: str = ""
+
+
 class AppConfig(BaseModel):
     douyin: DouyinConfig
     llm: LLMConfig
@@ -61,6 +67,7 @@ class AppConfig(BaseModel):
     schedule: ScheduleConfig = Field(default_factory=ScheduleConfig)
     storage: StorageConfig = Field(default_factory=StorageConfig)
     web: WebConfig = Field(default_factory=WebConfig)
+    telegram: TelegramConfig = Field(default_factory=TelegramConfig)
 
     @property
     def db_path(self) -> Path:
@@ -82,7 +89,22 @@ EDITABLE_SETTINGS = [
      "label": "最近 N 条（抓取并处理）"},
     {"key": "poll_interval_minutes", "section": "schedule", "field": "poll_interval_minutes",
      "type": "int", "label": "轮询间隔(分钟)"},
+    {"key": "telegram_enabled", "section": "telegram", "field": "enabled", "type": "bool",
+     "label": "Telegram 推送"},
+    {"key": "telegram_bot_token", "section": "telegram", "field": "bot_token", "type": "str",
+     "label": "Telegram Bot Token", "secret": True},
+    {"key": "telegram_chat_id", "section": "telegram", "field": "chat_id", "type": "str",
+     "label": "Telegram Chat ID"},
 ]
+
+
+def _coerce(value, typ: str):
+    """把 DB 里的字符串值按类型转换。"""
+    if typ == "int":
+        return int(value)
+    if typ == "bool":
+        return str(value).strip().lower() in ("1", "true", "yes", "on")
+    return str(value)
 
 
 def apply_overrides(cfg: AppConfig, overrides: dict) -> AppConfig:
@@ -93,7 +115,7 @@ def apply_overrides(cfg: AppConfig, overrides: dict) -> AppConfig:
         if raw is None or str(raw) == "":
             continue
         try:
-            value = int(raw) if spec["type"] == "int" else str(raw)
+            value = _coerce(raw, spec["type"])
         except (TypeError, ValueError):
             continue  # 非法值不覆盖
         setattr(getattr(cfg, spec["section"]), spec["field"], value)

@@ -316,7 +316,7 @@
 
 <script>
 "use strict";
-const STAGE_LABELS={discover:"发现",download:"下载",extract_audio:"抽音轨",transcribe:"转写",extract:"抽取观点"};
+const STAGE_LABELS={discover:"发现",download:"下载",extract_audio:"抽音轨",transcribe:"转写",extract:"抽取观点",notify:"推送"};
 const STANCE_LABELS={bullish:"看多",bearish:"看空",neutral:"中性"};
 const TYPE_LABELS={stock:"个股",industry:"行业"};
 const esc=s=>String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -357,6 +357,7 @@ function renderRows(videos){
       <div>
         <p class="title">${esc(v.title)}</p>
         <div class="meta">
+          ${v.author_name?`<span><b>作者</b> ${esc(v.author_name)}</span>`:""}
           <span><b>发布</b> <span class="num">${esc(v.publish_time)}</span></span>
           <span><b>观点</b> <span class="num">${v.opinion_count}</span> 条</span>
           ${sectors?`<span>${sectors}</span>`:""}
@@ -411,7 +412,7 @@ async function openDetail(id){
   const d=await fetchJSON("/api/videos/"+encodeURIComponent(id));
   document.getElementById("dTitle").textContent=d.title;
   document.getElementById("dMeta").innerHTML=
-    `发布 <span class="num">${esc(d.publish_time)}</span> · 抽取 <span class="num">${esc(d.analysis_time)}</span>
+    `${d.author_name?`👤 ${esc(d.author_name)} · `:""}发布 <span class="num">${esc(d.publish_time)}</span> · 抽取 <span class="num">${esc(d.analysis_time)}</span>
      · 模型 ${esc(d.llm_model||"—")} · <a href="${esc(d.video_url)}" target="_blank" rel="noopener">原视频 ↗</a>`;
   const summary=d.summary?`<div class="summary-box">${esc(d.summary)}</div>`:'<p class="tag">无摘要</p>';
   document.getElementById("dBody").innerHTML=`
@@ -527,6 +528,11 @@ function toast(msg){
 // ===== 设置抽屉 =====
 function fieldHtml(s){
   const v=s.value==null?"":s.value;
+  if(s.type==="bool"){
+    const on=v===true||v==="1"||v==="true";
+    return `<div class="field"><label class="switch"><input type="checkbox" id="set_${s.key}" ${on?"checked":""}>
+      <span class="track"><span class="thumb"></span></span><span class="switch-label">${esc(s.label)}</span></label></div>`;
+  }
   if(s.secret) return `<div class="field"><label>${esc(s.label)}</label>
     <textarea id="set_${s.key}" placeholder="留空则不修改">${esc(v)}</textarea></div>`;
   if(s.key==="author_sec_uid") return `<div class="field"><label>${esc(s.label)}</label>
@@ -554,9 +560,10 @@ function collectSettings(){
   const out={};
   _specs.forEach(s=>{
     const el=document.getElementById("set_"+s.key); if(!el)return;
+    if(s.type==="bool"){out[s.key]=el.checked?"1":"0";return;}
     const val=el.value.trim();
     if(s.secret && val==="")return;        // 密文留空=不改
-    out[s.key]= s.type==="int" ? val : val;
+    out[s.key]=val;
   });
   return out;
 }

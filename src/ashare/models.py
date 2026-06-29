@@ -19,11 +19,12 @@ class Stage(str, Enum):
     EXTRACT_AUDIO = "extract_audio"  # 抽音轨：ffmpeg -> 16k 单声道 wav
     TRANSCRIBE = "transcribe"    # 转写：Qwen3-ASR 语音转文字
     EXTRACT = "extract"          # 抽取：LLM 提取金融观点
+    NOTIFY = "notify"            # 推送：把结果发到 Telegram
 
     @classmethod
     def ordered(cls) -> list["Stage"]:
         """按执行顺序返回各阶段（discover 一般在抓取期单独完成）。"""
-        return [cls.DOWNLOAD, cls.EXTRACT_AUDIO, cls.TRANSCRIBE, cls.EXTRACT]
+        return [cls.DOWNLOAD, cls.EXTRACT_AUDIO, cls.TRANSCRIBE, cls.EXTRACT, cls.NOTIFY]
 
 
 class Status(str, Enum):
@@ -58,6 +59,7 @@ class Video:
     title: str
     video_url: str               # 网页可访问的视频主页链接
     publish_time: int            # 发布时间，Unix 秒
+    author_name: str = ""        # 博主昵称（展示与推送用）
     cover_url: str = ""
     duration_ms: int = 0
     download_url: str = ""        # 无水印下载地址（抓取时临时获取，不入库主表）

@@ -14,9 +14,9 @@ _BJ_TZ = timezone(timedelta(hours=8))
 # 阶段中文名，供看板展示
 STAGE_LABELS = {
     "discover": "发现", "download": "下载", "extract_audio": "抽音轨",
-    "transcribe": "转写", "extract": "抽取观点",
+    "transcribe": "转写", "extract": "抽取观点", "notify": "推送",
 }
-_ALL_STAGES = ["discover", "download", "extract_audio", "transcribe", "extract"]
+_ALL_STAGES = ["discover", "download", "extract_audio", "transcribe", "extract", "notify"]
 
 
 def fmt_time(ts: int) -> str:
@@ -49,6 +49,7 @@ def video_summary(db: Database, aweme_id: str) -> dict:
     return {
         "aweme_id": v.aweme_id,
         "title": v.title or "(待分析/无标题)",
+        "author_name": v.author_name,
         "video_url": v.video_url,
         "publish_time": fmt_time(v.publish_time),
         "overall_status": v.overall_status.value,

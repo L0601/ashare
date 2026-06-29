@@ -58,6 +58,7 @@ class _FakePage:
         self.video_play_addr = [["http://cdn/a.mp4", "http://cdn/a2.mp4"], "http://cdn/b.mp4"]
         self.cover = ["http://cdn/a.jpg", "http://cdn/b.jpg"]
         self.video_duration = [12000, 30000]
+        self.nickname = ["创业魔法师", "创业魔法师"]
         self.has_more = False
 
 
@@ -70,6 +71,7 @@ def test_build_videos_from_page():
     assert a.author_sec_uid == "sec_x"
     assert a.video_url == "https://www.douyin.com/video/111"
     assert a.publish_time == 1704135845
+    assert a.author_name == "创业魔法师"
     # 嵌套列表的播放地址应取第一个
     assert a.download_url == "http://cdn/a.mp4"
     assert a.duration_ms == 12000

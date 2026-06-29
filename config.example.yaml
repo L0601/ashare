@@ -46,3 +46,9 @@ storage:
 web:
   host: "127.0.0.1"
   port: 8000
+
+telegram:
+  # 视频处理完成后把结果推送到 Telegram。可在 Web 后台「设置」里开关与填写。
+  enabled: false
+  bot_token: ""      # BotFather 给的 token，形如 123456789:AAxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+  chat_id: ""        # 目标会话/群 id（群为负数，形如 -1001234567890）

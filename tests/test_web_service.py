@@ -42,8 +42,8 @@ def test_video_summary():
     assert s["overall_status"] == "success"
     assert s["opinion_count"] == 1
     assert s["sectors"] == ["半导体"]
-    # 阶段补全到 5 个，未跑的为 pending
-    assert len(s["stages"]) == 5
+    # 阶段补全到 6 个（含推送），未跑的为 pending
+    assert len(s["stages"]) == 6
     statuses = {st["stage"]: st["status"] for st in s["stages"]}
     assert statuses["download"] == "success"
     assert statuses["transcribe"] == "pending"

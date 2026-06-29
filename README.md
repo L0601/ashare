@@ -4,7 +4,7 @@
 
 ```
 发现最新视频 → 下载无水印 mp4 → ffmpeg 抽音轨(16k 单声道)
-  → 本地 Qwen3-ASR-1.7B 转写 → 云端 LLM 抽取行业/个股观点
+  → 本地 Qwen3-ASR-1.7B 转写 → 云端 LLM 抽取行业/个股观点 → 推送 Telegram
 ```
 
 全程留痕（视频链接、标题、抽取时间、转写文字、AI 输入/输出、各阶段状态），数据存
@@ -21,7 +21,8 @@ SQLite，中间文件按视频分目录存放，并提供 **Web 后台**（看�
 | `src/ashare/media/audio.py` | ffmpeg 抽音轨（命令构造与执行分离） |
 | `src/ashare/asr/` | 语音转写：接口 + Qwen3-ASR（MLX/transformers）+ Fake |
 | `src/ashare/llm/` | LLM 抽取：prompt + 兼容 OpenAI 调用 + 防御性 JSON 解析 |
-| `src/ashare/pipeline/` | 流水线状态机（`runner.py`，幂等续跑）+ 定时调度（`scheduler.py`） |
+| `src/ashare/notify/` | 推送层：Telegram 发送 + HTML 消息构造（`telegram.py`），抽象接口 + Fake/Noop |
+| `src/ashare/pipeline/` | 流水线状态机（`runner.py`，含 NOTIFY 阶段，幂等续跑）+ 定时调度（`scheduler.py`） |
 | `src/ashare/web/` | Web 后台：FastAPI 接口（`app.py`）+ 数据装配（`service.py`）+ 后台单飞拉取（`pull.py`）+ 自包含单页（`templates/dashboard.html`） |
 | `src/ashare/cli.py` | 命令行入口（运行 / 调度 / 诊断 / 重置） |
 
@@ -54,11 +55,13 @@ cp config.example.yaml config.yaml   # config.yaml 已被 .gitignore 忽略
 - `asr.engine`：`mlx` / `transformers` / `fake`（开发期可用 `fake` 跑通链路）
 - `asr.model`：模型名或本地路径（如 `mlx-community/Qwen3-ASR-1.7B-8bit`，或已下载到本地的目录）
 - `douyin.user_agent`：默认桌面浏览器 UA（已与 web 接口/cookie 来源一致），一般无需改
+- `telegram.enabled` / `telegram.bot_token` / `telegram.chat_id`：视频处理完成后推送到 Telegram（群 id 为负数）
 
 敏感信息只存在 `config.yaml`，不入 git。
 
 **运行时配置（Web 后台可改，存数据库覆盖文件）**：`cookie`、`author_sec_uid`、`latest_count`、
-`poll_interval_minutes` 这几项常改的配置可在看板「设置」抽屉里修改，保存即生效，
+`poll_interval_minutes`、`telegram_enabled` / `telegram_bot_token` / `telegram_chat_id`
+这几项常改的配置可在看板「设置」抽屉里修改，保存即生效，
 存于 SQLite `settings` 表并覆盖文件默认值（"清空所有数据"不会清掉它们）。UA、LLM 密钥/端点、
 ASR 模型路径等固化项不进后台，仍改 `config.yaml`。
 
@@ -102,6 +105,15 @@ ashare reset-db [--files]              # 重置：清空数据（--files 连带�
 - **桌面浏览器 UA** + 登录 Cookie（UA / cookie 来源 / web 接口 / 浏览器指纹保持一致，降低风控误判）；不频繁更换 UA
 - 抓取失败（含风控/签名失效）按可恢复错误记录到 `poll_runs`，不硬刚重试
 - 抓取层会多取并按发布时间倒序，规避置顶视频占用「最新 N 条」名额
+
+## Telegram 推送
+
+视频**完整处理完成**（转写 + 抽取）后，NOTIFY 阶段把结果推送到 Telegram：消息含**作者、原视频链接、
+发布时间、整体摘要、板块、逐条观点、口播全文**（HTML 格式；超 4096 自动拆条）。
+
+- 配置 `telegram.enabled/bot_token/chat_id`（或在 Web 后台「设置」里填）即生效。
+- 推送是流水线的一个阶段，**幂等**：已推送成功的视频重跑不会重复发；推送失败下次重试。
+- **历史不回溯**：开启推送前已完成的老视频不会被补发（它们不会被重新处理）。
 
 ## 续跑与幂等
 

@@ -139,6 +139,33 @@ def test_upsert_updates_title_when_incoming_nonempty(db):
     assert db.get_video("v1").title == "新文案"
 
 
+def test_video_author_name_persisted(db):
+    db.upsert_video(Video("v1", "s", "标题", "u", publish_time=100, author_name="创业魔法师"))
+    assert db.get_video("v1").author_name == "创业魔法师"
+    # 再次 discover 传空作者名不应覆盖
+    db.upsert_video(Video("v1", "s", "标题", "u", publish_time=100, author_name=""))
+    assert db.get_video("v1").author_name == "创业魔法师"
+
+
+def test_migrate_adds_author_name_to_old_db(tmp_path):
+    """老库（无 author_name 列）打开时应自动补列，不报错。"""
+    import sqlite3
+    p = tmp_path / "old.db"
+    con = sqlite3.connect(p)
+    con.execute("""CREATE TABLE videos (aweme_id TEXT PRIMARY KEY, author_sec_uid TEXT NOT NULL,
+        title TEXT NOT NULL, video_url TEXT NOT NULL, publish_time INTEGER NOT NULL,
+        cover_url TEXT DEFAULT '', duration_ms INTEGER DEFAULT 0,
+        overall_status TEXT NOT NULL DEFAULT 'pending', discovered_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL)""")
+    con.execute("INSERT INTO videos VALUES ('v1','s','t','u',100,'',0,'pending',1,1)")
+    con.commit(); con.close()
+    database = Database(p, clock=lambda: 1000)   # 打开即迁移
+    cols = {r["name"] for r in database.conn.execute("PRAGMA table_info(videos)")}
+    assert "author_name" in cols
+    assert database.get_video("v1") is not None   # 老数据可正常读
+    database.close()
+
+
 def test_settings_get_set(db):
     assert db.get_settings() == {}
     db.set_settings({"cookie": "ck", "latest_count": "10"})

@@ -42,6 +42,7 @@ cp config.example.yaml config.yaml
 #   douyin.author_sec_uid  博主 sec_uid（可用下面 resolve-author 解析后回填）
 #   llm.base_url/api_key/model  兼容 OpenAI 的 LLM 服务（如 DeepSeek）
 #   asr.engine             正式跑改为 mlx；开发期可用 fake 跑通链路
+#   telegram.enabled/bot_token/chat_id  处理完成后推送 Telegram（也可在 Web 后台设置）
 ```
 
 ## 3. 日常运行
@@ -60,8 +61,10 @@ ashare run-once
 #   - 顶栏「拉取最新」按钮：后台异步执行 run_once(limit=最近N条)，单飞防重复
 #   - 顶栏「设置」按钮：右侧抽屉，可改运行时配置（存数据库，保存即生效）：
 #       cookie / author_sec_uid / 最近N条(latest_count) / poll_interval_minutes
+#       telegram_enabled(开关) / telegram_bot_token / telegram_chat_id
 #       sec_uid 支持粘主页链接，点「校验」会真连抖音确认账号（昵称+作品数）
 #       UA、LLM 密钥/端点、ASR 模型等固化项不在后台，改 config.yaml
+#   - 列表/详情显示作者名；视频处理完成后自动推送 Telegram（NOTIFY 阶段，幂等不重复）
 #   - 每行「删除」按钮：删该视频全部记录+中间文件（居中确认弹窗）
 #   - 设置抽屉「清空所有数据」：清空所有视频数据+中间文件，但保留配置（确认弹窗）
 #   - 设置抽屉「自动拉取」开关：开启后，看板打开期间每隔「轮询间隔」分钟由前端自动触发拉取；

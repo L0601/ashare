@@ -21,6 +21,8 @@ from ..douyin.base import DouyinClient
 from ..llm.extractor import LLMExtractor
 from ..media.audio import extract_audio, probe_duration
 from ..models import Stage, Status, Transcript, Video
+from ..notify.base import Notifier, NoopNotifier, make_notifier
+from ..notify.telegram import build_message
 from ..result import Err, Ok, Result
 
 
@@ -33,6 +35,7 @@ class Pipeline:
         transcriber: Transcriber,
         extractor: LLMExtractor,
         *,
+        notifier: Notifier | None = None,
         download_fn: Callable = None,
         extract_audio_fn: Callable = extract_audio,
         probe_fn: Callable = probe_duration,
@@ -43,6 +46,7 @@ class Pipeline:
         self.client = client
         self.transcriber = transcriber
         self.extractor = extractor
+        self.notifier = notifier or NoopNotifier()
         self._download_fn = download_fn or _default_download
         self._extract_audio_fn = extract_audio_fn
         self._probe_fn = probe_fn
@@ -84,6 +88,7 @@ class Pipeline:
             (Stage.EXTRACT_AUDIO, lambda: self._do_extract_audio(video)),
             (Stage.TRANSCRIBE, lambda: self._transcribe(video)),
             (Stage.EXTRACT, lambda: self._extract(video)),
+            (Stage.NOTIFY, lambda: self._notify(video)),
         ]
         for stage, work in stages:
             if not self._run_stage(video.aweme_id, stage, work):
@@ -155,6 +160,14 @@ class Pipeline:
         )
         return Ok(None)
 
+    def _notify(self, video: Video) -> Result[None, str]:
+        """把结果推送到 Telegram（未启用时 NoopNotifier 直接成功）。"""
+        fresh = self.db.get_video(video.aweme_id) or video   # 取回 extract 回填后的标题
+        transcript = self.db.get_transcript(video.aweme_id)
+        analysis = self.db.get_analysis(video.aweme_id)
+        msg = build_message(fresh, transcript.text if transcript else "", analysis)
+        return self.notifier.send(msg)
+
     # ---------- 路径 ----------
     def _dir(self, aweme_id: str) -> Path:
         d = self.cfg.videos_dir / aweme_id
@@ -203,4 +216,5 @@ def build_pipeline(cfg: AppConfig, db: Database | None = None) -> Pipeline:
         client=F2DouyinClient(cfg),
         transcriber=make_transcriber(cfg.asr),
         extractor=LLMExtractor(cfg.llm),
+        notifier=make_notifier(cfg.telegram),
     )

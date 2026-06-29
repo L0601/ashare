@@ -79,6 +79,7 @@ def build_videos_from_page(page: Any, sec_uid: str) -> list[Video]:
     addrs = _as_list(page.video_play_addr)
     covers = _as_list(page.cover)
     durs = _as_list(getattr(page, "video_duration", []))
+    names = _as_list(getattr(page, "nickname", []))
     out: list[Video] = []
     for i, aid in enumerate(aweme_ids):
         if not aid:
@@ -89,6 +90,7 @@ def build_videos_from_page(page: Any, sec_uid: str) -> list[Video]:
             title=_pick(descs, i, ""),
             video_url=f"https://www.douyin.com/video/{aid}",
             publish_time=parse_create_time(_pick(cts, i, 0)),
+            author_name=str(_first(_pick(names, i, "")) or ""),
             cover_url=str(_first(_pick(covers, i, "")) or ""),
             duration_ms=int(_first(_pick(durs, i, 0)) or 0),
             download_url=str(_first(_pick(addrs, i, "")) or ""),

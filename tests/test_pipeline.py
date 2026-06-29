@@ -147,6 +147,76 @@ def test_existing_title_not_overwritten(tmp_path):
     assert db.get_video("v1").title == "标题1"   # 保留原文案
 
 
+def test_notify_stage_pushes_on_success(tmp_path):
+    """视频跑完，NOTIFY 阶段用 FakeNotifier 推送一条含标题/作者/观点的消息。"""
+    from ashare.notify.base import FakeNotifier
+    from ashare.pipeline.runner import Pipeline
+
+    cfg = _cfg(tmp_path)
+    db = Database(":memory:", clock=lambda: 1000)
+    fake_notifier = FakeNotifier()
+    videos = [Video("v1", "sec1", "看好新能源", "https://d/v1", publish_time=200,
+                    author_name="创业魔法师", download_url="http://x/1.mp4")]
+
+    def ok_dl(url, dest, **kw):
+        from pathlib import Path
+        Path(dest).write_bytes(b"V"); return Ok(Path(dest))
+
+    def ok_au(src, dst, **kw):
+        from pathlib import Path
+        Path(dst).write_bytes(b"W"); return Ok(Path(dst))
+
+    pipe = Pipeline(
+        cfg=cfg, db=db, client=FakeDouyinClient(sec_uid="sec1", videos=videos),
+        transcriber=FakeTranscriber("我看好新能源"),
+        extractor=LLMExtractor(cfg.llm, client=_fake_llm_client()),
+        notifier=fake_notifier,
+        download_fn=ok_dl, extract_audio_fn=ok_au, probe_fn=lambda p: 1.0, pace=lambda: None,
+    )
+    pipe.discover()
+    assert pipe.process_video(db.get_video("v1")) is True
+    assert db.get_stage_status("v1", Stage.NOTIFY) == Status.SUCCESS
+    assert len(fake_notifier.sent) == 1
+    msg = fake_notifier.sent[0]
+    assert "创业魔法师" in msg and "宁德时代" in msg and "我看好新能源" in msg
+
+
+def test_notify_failure_marks_video_failed(tmp_path):
+    """推送失败 → NOTIFY 阶段 failed、视频 failed，下次可重试（幂等不重复发已成功阶段）。"""
+    from ashare.notify.base import Notifier
+    from ashare.pipeline.runner import Pipeline
+    from ashare.result import Err as _Err
+
+    class FailNotifier(Notifier):
+        def send(self, text):
+            return _Err("网络错误")
+
+    cfg = _cfg(tmp_path)
+    db = Database(":memory:", clock=lambda: 1000)
+    videos = [Video("v1", "sec1", "t", "https://d/v1", publish_time=200, download_url="http://x/1.mp4")]
+
+    def ok_dl(url, dest, **kw):
+        from pathlib import Path
+        Path(dest).write_bytes(b"V"); return Ok(Path(dest))
+
+    def ok_au(src, dst, **kw):
+        from pathlib import Path
+        Path(dst).write_bytes(b"W"); return Ok(Path(dst))
+
+    pipe = Pipeline(
+        cfg=cfg, db=db, client=FakeDouyinClient(sec_uid="sec1", videos=videos),
+        transcriber=FakeTranscriber("x"),
+        extractor=LLMExtractor(cfg.llm, client=_fake_llm_client()),
+        notifier=FailNotifier(),
+        download_fn=ok_dl, extract_audio_fn=ok_au, probe_fn=lambda p: 1.0, pace=lambda: None,
+    )
+    pipe.discover()
+    assert pipe.process_video(db.get_video("v1")) is False
+    assert db.get_stage_status("v1", Stage.EXTRACT) == Status.SUCCESS   # 抽取已完成
+    assert db.get_stage_status("v1", Stage.NOTIFY) == Status.FAILED
+    assert db.get_video("v1").overall_status == Status.FAILED
+
+
 def test_stage_failure_stops_chain(tmp_path):
     """转写失败：transcribe 标 failed，后续 extract 不执行，视频整体 failed。"""
     class FailTranscriber(FakeTranscriber):
