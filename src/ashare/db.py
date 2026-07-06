@@ -100,7 +100,9 @@ class Database:
         self._clock = clock or (lambda: int(time.time()))
         if str(path) != ":memory:":
             Path(path).parent.mkdir(parents=True, exist_ok=True)
-        self.conn = sqlite3.connect(str(path))
+        # check_same_thread=False：允许跨线程复用连接（调度器主线程建、工作线程用）。
+        # 安全前提：调度任务串行执行(APScheduler max_instances=1)、且已开 WAL，无并发写同连接。
+        self.conn = sqlite3.connect(str(path), check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         # WAL + busy_timeout：允许"看板每2s读"与"后台拉取写"并发，避免 database is locked
         self.conn.execute("PRAGMA journal_mode=WAL")

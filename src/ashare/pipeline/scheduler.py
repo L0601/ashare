@@ -25,10 +25,11 @@ def run_scheduler(cfg: AppConfig) -> None:
         logger.info("本轮完成：%s", stats)
 
     scheduler = BlockingScheduler(timezone="Asia/Shanghai")
+    # 注意：不要传 next_run_time=None —— 那会把任务加成"暂停"状态、永不触发。
+    # 首轮由下面的 job() 手动跑；间隔任务正常在 N 分钟后开始周期触发。
     scheduler.add_job(
         job, "interval",
         minutes=cfg.schedule.poll_interval_minutes,
-        next_run_time=None,  # 由下方手动先跑一轮
         id="poll",
     )
     logger.info("调度启动，间隔 %d 分钟", cfg.schedule.poll_interval_minutes)

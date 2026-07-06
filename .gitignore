@@ -26,3 +26,4 @@ models/
 
 # 计划文档（按团队约定不入 git）
 docs/
+schedule.log

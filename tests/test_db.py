@@ -166,6 +166,25 @@ def test_migrate_adds_author_name_to_old_db(tmp_path):
     database.close()
 
 
+def test_db_usable_across_threads(tmp_path):
+    """连接需能跨线程使用（调度器主线程建、工作线程用),否则 sqlite 报 ProgrammingError。"""
+    import threading
+    database = Database(tmp_path / "t.db", clock=lambda: 1000)
+    err = {}
+
+    def worker():
+        try:
+            database.upsert_video(_video("v1"))   # 在另一个线程写库
+        except Exception as e:
+            err["e"] = e
+
+    t = threading.Thread(target=worker)
+    t.start(); t.join()
+    assert "e" not in err, f"跨线程用连接报错: {err.get('e')}"
+    assert database.get_video("v1") is not None
+    database.close()
+
+
 def test_settings_get_set(db):
     assert db.get_settings() == {}
     db.set_settings({"cookie": "ck", "latest_count": "10"})
