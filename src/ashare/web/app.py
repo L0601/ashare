@@ -23,6 +23,7 @@ from ..config import (
 )
 from ..db import Database
 from ..douyin.base import DouyinClient
+from ..storage import video_dir
 from .pull import PullManager
 from .service import dashboard_data, video_detail
 
@@ -160,10 +161,11 @@ def create_app(
     def api_delete_one(aweme_id: str):
         db = open_db()
         try:
+            video = db.get_video(aweme_id)
             db.delete_video(aweme_id)
         finally:
             db.close()
-        vdir = file_cfg.videos_dir / aweme_id
+        vdir = video_dir(file_cfg.videos_dir, video, aweme_id)
         if vdir.exists():
             shutil.rmtree(vdir)
         return {"ok": True}

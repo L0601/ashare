@@ -124,6 +124,18 @@ def test_delete_one_video(tmp_path):
     assert c.get("/api/videos").json()["stats"]["total"] == 0
 
 
+def test_delete_one_video_removes_dated_video_dir(tmp_path):
+    cfg = _cfg(tmp_path)
+    vdir = cfg.videos_dir / "1970-01-01_v1"
+    vdir.mkdir(parents=True)
+    (vdir / "video.mp4").write_bytes(b"x")
+
+    c = _client(tmp_path, _PM())
+
+    assert c.delete("/api/videos/v1").json()["ok"] is True
+    assert not vdir.exists()
+
+
 def test_clear_all_videos(tmp_path):
     c = _client(tmp_path, _PM())
     assert c.delete("/api/videos").json()["ok"] is True

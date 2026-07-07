@@ -99,7 +99,7 @@ ashare download-one "https://www.douyin.com/video/74123..." --audio  # 下载并
 # 步骤4：验证 ASR（需先装 mlx 后端，首次自动下权重数 GB）
 #   先把 config.yaml 的 asr.engine 从 fake 改为 mlx
 pip install -e ".[asr-mlx]"
-ashare check-asr data/videos/<某个aweme_id>/audio.wav
+ashare check-asr data/videos/<YYYY-MM-DD>_<某个aweme_id>/audio.wav
 
 # 步骤3+5：下载、抽音轨、转写、抽取 串起来一次跑完
 ashare run-once

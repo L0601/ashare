@@ -87,7 +87,7 @@ ashare schedule
 ashare check-llm                       # 验 LLM 连通（内置样例，不联网抖音）
 ashare list-videos --count 5           # 验抓取：打印最新视频列表（只读不下载）
 ashare download-one "<视频链接>" --audio  # 验解析+下载+抽音轨（不跑 ASR/LLM）
-ashare check-asr data/videos/<id>/audio.wav   # 验 Qwen3-ASR 转写
+ashare check-asr data/videos/<YYYY-MM-DD>_<id>/audio.wav   # 验 Qwen3-ASR 转写
 ashare reset-db [--files]              # 重置：清空数据（--files 连带删中间文件，保留配置）
 ```
 

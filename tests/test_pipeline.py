@@ -106,6 +106,7 @@ def test_process_video_full_success(tmp_path):
     assert analysis.opinions[0].target_name == "宁德时代"
     # 中间文件落盘
     base = pipe._dir("v1")
+    assert base.name == "1970-01-01_v1"
     assert (base / "video.mp4").exists()
     assert (base / "audio.wav").exists()
     assert (base / "transcript.txt").read_text(encoding="utf-8") == "我看好新能源板块"

@@ -24,6 +24,7 @@ from ..models import Stage, Status, Transcript, Video
 from ..notify.base import Notifier, NoopNotifier, make_notifier
 from ..notify.telegram import build_message
 from ..result import Err, Ok, Result
+from ..storage import video_dir
 
 
 class Pipeline:
@@ -170,7 +171,7 @@ class Pipeline:
 
     # ---------- 路径 ----------
     def _dir(self, aweme_id: str) -> Path:
-        d = self.cfg.videos_dir / aweme_id
+        d = video_dir(self.cfg.videos_dir, self.db.get_video(aweme_id), aweme_id)
         d.mkdir(parents=True, exist_ok=True)
         return d
 

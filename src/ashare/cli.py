@@ -129,6 +129,7 @@ def download_one(
     from .douyin.client import F2DouyinClient, extract_aweme_id
     from .douyin.downloader import download_video
     from .media.audio import extract_audio
+    from .storage import video_dir
 
     cfg = _effective_config()
     aweme_id = extract_aweme_id(video)
@@ -141,7 +142,12 @@ def download_one(
         raise typer.Exit(code=1)
     typer.echo(f"✓ 解析到下载地址：{url_res.value[:90]}...")
 
-    out_dir = cfg.videos_dir / aweme_id
+    detail = client.list_latest(cfg.douyin.author_sec_uid, cfg.douyin.latest_count)
+    video_meta = (
+        next((v for v in detail.value if v.aweme_id == aweme_id), None)
+        if detail.is_ok() else None
+    )
+    out_dir = video_dir(cfg.videos_dir, video_meta, aweme_id)
     mp4 = out_dir / "video.mp4"
     dl = download_video(url_res.value, mp4, user_agent=cfg.douyin.user_agent, cookie=cfg.douyin.cookie)
     if not dl.is_ok():
