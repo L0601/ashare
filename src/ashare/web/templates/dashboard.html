@@ -57,6 +57,7 @@
   /* 顶栏只读状态提示：自动拉取开启时显示 */
   .auto-ind{font-size:12px;color:#86EFAC;background:#0c2417;border:1px solid #166534;
     border-radius:20px;padding:3px 10px;display:inline-flex;align-items:center;gap:6px}
+  .auto-ind[hidden]{display:none}
   .auto-ind::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--accent);
     box-shadow:0 0 8px var(--accent)}
 
@@ -329,7 +330,7 @@ const icons={
   op:'<svg viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="M7 14l4-4 3 3 5-6"/></svg>'
 };
 
-async function fetchJSON(url){const r=await fetch(url);if(!r.ok)throw new Error(r.status);return r.json();}
+async function fetchJSON(url, opts){const r=await fetch(url, opts);if(!r.ok)throw new Error(r.status);return r.json();}
 
 function renderStats(s){
   const cards=[
@@ -405,7 +406,7 @@ function timeline(stages){
     `<div class="tl"><span class="nm">${STAGE_LABELS[st.stage]||st.stage}</span>
       <span class="badge ${st.status}">${st.status}</span>
       ${st.error?`<span class="err">${esc(st.error)}</span>`:""}
-      <span class="ts num">${esc(st.finished_at)}</span></div>`).join("")+`</div>`;
+      <span class="ts num">${esc(st.finished_at)} · ${esc(st.duration_label)}</span></div>`).join("")+`</div>`;
 }
 
 async function openDetail(id){
@@ -472,8 +473,9 @@ function maybeAutoPull(){
 }
 async function toggleAuto(on){
   try{
-    await fetch("/api/auto-pull",{method:"POST",headers:{"Content-Type":"application/json"},
+    const a=await fetchJSON("/api/auto-pull",{method:"POST",headers:{"Content-Type":"application/json"},
       body:JSON.stringify({enabled:on})});
+    renderAuto(a);
     if(on){lastAutoPull=Date.now(); toast("自动拉取已开启"); pull();}  // 开启即拉一次
     else{toast("自动拉取已关闭");}
   }finally{load();}

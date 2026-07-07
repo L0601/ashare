@@ -32,7 +32,7 @@ def _seed():
 
 def test_fmt_time():
     assert fmt_time(0) == "-"
-    assert fmt_time(1704135845) == "2024-01-02 03:04"
+    assert fmt_time(1704135845) == "2024-01-02 03:04:05"
 
 
 def test_video_summary():
@@ -47,6 +47,22 @@ def test_video_summary():
     statuses = {st["stage"]: st["status"] for st in s["stages"]}
     assert statuses["download"] == "success"
     assert statuses["transcribe"] == "pending"
+
+
+def test_stage_list_includes_second_precision_and_duration():
+    now = {"ts": 1700000000}
+    db = Database(":memory:", clock=lambda: now["ts"])
+    db.upsert_video(Video("v1", "sec", "t", "https://d/v1", publish_time=1704135845))
+    db.set_stage("v1", Stage.DOWNLOAD, Status.RUNNING)
+    now["ts"] += 7
+    db.set_stage("v1", Stage.DOWNLOAD, Status.SUCCESS)
+
+    stage = {st["stage"]: st for st in video_summary(db, "v1")["stages"]}["download"]
+
+    assert stage["started_at"] == "2023-11-15 06:13:20"
+    assert stage["finished_at"] == "2023-11-15 06:13:27"
+    assert stage["duration_seconds"] == 7
+    assert stage["duration_label"] == "7s"
 
 
 def test_dashboard_stats():

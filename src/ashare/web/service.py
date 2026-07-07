@@ -23,7 +23,19 @@ def fmt_time(ts: int) -> str:
     """Unix 秒转东八区可读字符串；0 显示为 '-'。"""
     if not ts:
         return "-"
-    return datetime.fromtimestamp(ts, _BJ_TZ).strftime("%Y-%m-%d %H:%M")
+    return datetime.fromtimestamp(ts, _BJ_TZ).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def fmt_duration(seconds: int | None) -> str:
+    if seconds is None:
+        return "-"
+    if seconds < 60:
+        return f"{seconds}s"
+    minutes, sec = divmod(seconds, 60)
+    if minutes < 60:
+        return f"{minutes}m {sec}s"
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours}h {minutes}m {sec}s"
 
 
 def _stage_list(stage_rows: dict) -> list[dict]:
@@ -31,12 +43,18 @@ def _stage_list(stage_rows: dict) -> list[dict]:
     out = []
     for s in _ALL_STAGES:
         row = stage_rows.get(s, {})
+        started = row.get("started_at") or 0
+        finished = row.get("finished_at") or 0
+        duration = (finished - started) if started and finished and finished >= started else None
         out.append({
             "stage": s,
             "label": STAGE_LABELS[s],
             "status": row.get("status", "pending"),
             "error": row.get("error", ""),
-            "finished_at": fmt_time(row.get("finished_at") or 0),
+            "started_at": fmt_time(started),
+            "finished_at": fmt_time(finished),
+            "duration_seconds": duration,
+            "duration_label": fmt_duration(duration),
         })
     return out
 

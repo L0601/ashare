@@ -4,6 +4,7 @@
 """
 
 import time
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 
@@ -152,7 +153,17 @@ def test_videos_includes_auto_status(tmp_path):
 
 def test_toggle_auto_pull_persists(tmp_path):
     c = _client(tmp_path, _PM())
-    assert c.post("/api/auto-pull", json={"enabled": True}).json()["enabled"] is True
+    on = c.post("/api/auto-pull", json={"enabled": True}).json()
+    assert on["enabled"] is True
+    assert on["interval_minutes"] == 90
     assert c.get("/api/videos").json()["auto"]["enabled"] is True
-    assert c.post("/api/auto-pull", json={"enabled": False}).json()["enabled"] is False
+    off = c.post("/api/auto-pull", json={"enabled": False}).json()
+    assert off["enabled"] is False
+    assert off["interval_minutes"] == 90
     assert c.get("/api/videos").json()["auto"]["enabled"] is False
+
+
+def test_auto_indicator_hidden_attribute_is_not_overridden():
+    html = (Path(__file__).parents[1] / "src/ashare/web/templates/dashboard.html").read_text()
+
+    assert ".auto-ind[hidden]" in html

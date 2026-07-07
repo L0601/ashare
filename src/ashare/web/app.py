@@ -93,7 +93,7 @@ def create_app(
             db.set_settings({"auto_pull": "1" if enabled else "0"})
         finally:
             db.close()
-        return {"enabled": enabled}
+        return {"enabled": enabled, "interval_minutes": effective().schedule.poll_interval_minutes}
 
     @app.get("/api/videos/{aweme_id}")
     def api_detail(aweme_id: str):
