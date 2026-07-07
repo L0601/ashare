@@ -20,7 +20,7 @@ TARGET_SAMPLE_RATE = 16000
 def build_ffmpeg_cmd(src: str | Path, dst: str | Path) -> list[str]:
     """构造抽音轨命令：去视频流、单声道、16k、wav。纯函数。"""
     return [
-        "ffmpeg", "-y",
+        "ffmpeg", "-nostdin", "-y",
         "-i", str(src),
         "-vn",                          # 丢弃视频流
         "-ac", "1",                     # 单声道
@@ -65,4 +65,4 @@ def probe_duration(src: str | Path, runner: Callable | None = None) -> float:
 
 
 def _default_runner(cmd: list[str]) -> subprocess.CompletedProcess:
-    return subprocess.run(cmd, capture_output=True, text=True)
+    return subprocess.run(cmd, capture_output=True, text=True, stdin=subprocess.DEVNULL)

@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import html
+import logging
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Callable
@@ -125,5 +126,11 @@ class TelegramNotifier:
 def _httpx_poster(url: str, payload: dict) -> dict:
     import httpx
 
-    resp = httpx.post(url, json=payload, timeout=10)
+    httpx_logger = logging.getLogger("httpx")
+    old_level = httpx_logger.level
+    httpx_logger.setLevel(max(old_level, logging.WARNING))
+    try:
+        resp = httpx.post(url, json=payload, timeout=10)
+    finally:
+        httpx_logger.setLevel(old_level)
     return resp.json()

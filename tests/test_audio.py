@@ -2,17 +2,33 @@
 
 import subprocess
 
-from ashare.media.audio import build_ffmpeg_cmd, extract_audio
+from ashare.media.audio import _default_runner, build_ffmpeg_cmd, extract_audio
 from ashare.result import Err, Ok
 
 
 def test_build_ffmpeg_cmd():
     cmd = build_ffmpeg_cmd("a.mp4", "b.wav")
     assert cmd[0] == "ffmpeg"
+    assert "-nostdin" in cmd                 # 后台运行时不读终端输入
     assert "-vn" in cmd                      # 去视频
     assert cmd[cmd.index("-ar") + 1] == "16000"  # 16k
     assert cmd[cmd.index("-ac") + 1] == "1"      # 单声道
     assert cmd[-1] == "b.wav"
+
+
+def test_default_runner_detaches_stdin(monkeypatch):
+    calls = {}
+
+    def fake_run(cmd, **kwargs):
+        calls["cmd"] = cmd
+        calls["kwargs"] = kwargs
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    _default_runner(["ffmpeg", "-version"])
+
+    assert calls["kwargs"]["stdin"] == subprocess.DEVNULL
 
 
 def _ok_proc(*a, **k):

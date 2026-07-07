@@ -23,7 +23,7 @@ dependencies = [
 
 [project.optional-dependencies]
 # ASR 推理后端：Apple Silicon 优先 MLX，transformers 为兜底
-asr-mlx = ["mlx", "mlx-audio", "librosa", "soundfile"]
+asr-mlx = ["mlx", "mlx-audio", "transformers==5.5.4", "librosa", "soundfile"]
 asr-transformers = ["torch", "transformers", "librosa", "soundfile", "accelerate"]
 dev = ["pytest", "pytest-asyncio"]
 

@@ -1,9 +1,11 @@
 """推送层单测：消息构造、拆条、发送（注入 poster）、工厂、Noop/Fake。不联网。"""
 
+import logging
+
 from ashare.config import TelegramConfig
 from ashare.models import Analysis, Opinion, Stance, TargetType, Video
 from ashare.notify.base import FakeNotifier, NoopNotifier, make_notifier
-from ashare.notify.telegram import TelegramNotifier, build_message, split_message
+from ashare.notify.telegram import TelegramNotifier, _httpx_poster, build_message, split_message
 from ashare.result import Err, Ok
 
 
@@ -79,6 +81,29 @@ def test_telegram_notifier_retries_then_fails():
     r = n.send("hi")
     assert isinstance(r, Err)
     assert calls["n"] == 2                        # 重试 1 次
+
+
+def test_httpx_poster_suppresses_token_url_logs(monkeypatch):
+    httpx_logger = logging.getLogger("httpx")
+    old_level = httpx_logger.level
+    httpx_logger.setLevel(logging.INFO)
+
+    def fake_post(url, json, timeout):
+        assert httpx_logger.getEffectiveLevel() >= logging.WARNING
+
+        class Resp:
+            def json(self):
+                return {"ok": True}
+
+        return Resp()
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+
+    assert _httpx_poster("https://api.telegram.org/botSECRET/sendMessage", {}) == {"ok": True}
+    assert httpx_logger.level == logging.INFO
+    httpx_logger.setLevel(old_level)
 
 
 def test_make_notifier_enabled_vs_noop():
