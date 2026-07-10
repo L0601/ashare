@@ -51,6 +51,9 @@ def run_scheduler(cfg: AppConfig) -> None:
         job, "interval",
         minutes=cfg.schedule.poll_interval_minutes,
         id="poll",
+        misfire_grace_time=3600,
+        coalesce=True,
+        max_instances=1,
     )
     logger.info("调度启动，间隔 %d 分钟", cfg.schedule.poll_interval_minutes)
     job()  # 启动即跑一轮，之后按间隔

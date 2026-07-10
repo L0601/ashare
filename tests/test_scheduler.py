@@ -7,9 +7,12 @@ from ashare.pipeline import scheduler
 
 
 class FakeBlockingScheduler:
+    last_instance = None
+
     def __init__(self, timezone):
         self.timezone = timezone
         self.jobs = []
+        FakeBlockingScheduler.last_instance = self
 
     def add_job(self, func, trigger, **kwargs):
         self.jobs.append((func, trigger, kwargs))
@@ -67,3 +70,20 @@ def test_scheduler_runs_poll_after_beijing_quiet_hours(monkeypatch):
     scheduler.run_scheduler(_cfg())
 
     assert pipe.calls == 1
+
+
+def test_scheduler_configures_wake_resume_policy(monkeypatch):
+    monkeypatch.setattr(scheduler, "BlockingScheduler", FakeBlockingScheduler)
+    monkeypatch.setattr(scheduler, "build_pipeline", lambda cfg: FakePipeline())
+    monkeypatch.setattr(
+        scheduler,
+        "now_beijing",
+        lambda: datetime(2026, 7, 6, 8, 0, tzinfo=ZoneInfo("Asia/Shanghai")),
+    )
+
+    scheduler.run_scheduler(_cfg())
+
+    _, _, options = FakeBlockingScheduler.last_instance.jobs[0]
+    assert options["misfire_grace_time"] == 3600
+    assert options["coalesce"] is True
+    assert options["max_instances"] == 1
