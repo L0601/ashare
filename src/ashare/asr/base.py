@@ -28,6 +28,9 @@ class Transcriber(abc.ABC):
     def transcribe(self, wav_path: str | Path) -> Result[TranscriptResult, str]:
         """把 16k 单声道 wav 转成文字。"""
 
+    def release(self) -> None:
+        """释放模型等重量级资源；无状态实现无需处理。"""
+
 
 class FakeTranscriber(Transcriber):
     """测试/离线用：返回预设文本。"""

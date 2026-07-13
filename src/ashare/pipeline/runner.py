@@ -71,6 +71,13 @@ class Pipeline:
 
     def run_once(self, limit: int | None = None) -> dict:
         """一轮：发现新视频 + 处理未完成视频。limit 限制本轮处理条数（取最新的若干条）。"""
+        try:
+            return self._run_once(limit)
+        finally:
+            self.transcriber.release()
+
+    def _run_once(self, limit: int | None = None) -> dict:
+        """执行一轮业务处理，资源生命周期由 run_once 统一管理。"""
         poll_id = self.db.start_poll()
         discovered = self.discover()
         if not discovered.is_ok():

@@ -321,6 +321,23 @@ def test_run_once_processes_only_unfinished(tmp_path):
     assert stats2["processed"] == 0
 
 
+def test_run_once_releases_transcriber_after_processing_batch(tmp_path):
+    class TrackingTranscriber(FakeTranscriber):
+        def __init__(self):
+            super().__init__("我看好新能源板块")
+            self.release_count = 0
+
+        def release(self):
+            self.release_count += 1
+
+    transcriber = TrackingTranscriber()
+    pipe, _ = _build(tmp_path, transcriber=transcriber)
+
+    pipe.run_once()
+
+    assert transcriber.release_count == 1
+
+
 def test_run_once_records_poll(tmp_path):
     pipe, db = _build(tmp_path)
     pipe.run_once()
@@ -349,3 +366,33 @@ def test_discover_failure_marks_poll_failed(tmp_path):
     assert stats["processed"] == 0
     row = db.conn.execute("SELECT * FROM poll_runs ORDER BY id DESC LIMIT 1").fetchone()
     assert row["status"] == "failed"
+
+
+def test_run_once_releases_transcriber_when_discovery_fails(tmp_path):
+    from ashare.pipeline.runner import Pipeline
+
+    cfg = _cfg(tmp_path)
+    db = Database(":memory:", clock=lambda: 1000)
+
+    class FailClient(FakeDouyinClient):
+        def list_latest(self, sec_uid, n):
+            return Err("风控拦截")
+
+    class TrackingTranscriber(FakeTranscriber):
+        def __init__(self):
+            super().__init__()
+            self.release_count = 0
+
+        def release(self):
+            self.release_count += 1
+
+    transcriber = TrackingTranscriber()
+    pipe = Pipeline(
+        cfg=cfg, db=db, client=FailClient(), transcriber=transcriber,
+        extractor=LLMExtractor(cfg.llm, client=_fake_llm_client()),
+        pace=lambda: None,
+    )
+
+    pipe.run_once()
+
+    assert transcriber.release_count == 1

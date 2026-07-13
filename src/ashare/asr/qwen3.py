@@ -4,7 +4,7 @@
 - mlx：Apple Silicon 上最优（Metal 加速），走 mlx-audio。
 - transformers：官方通用路线，CPU/MPS 皆可，作兜底。
 
-模型按需懒加载且只加载一次。外部失败统一转 Result.Err（可恢复）。
+模型在每轮首次转写时按需加载，轮次结束后可释放。外部失败统一转 Result.Err（可恢复）。
 
 注意：Qwen3-ASR 较新，不同版本的加载/推理入口可能微调。本实现把加载与推理
 集中在本文件，若模型卡接口有变，只需改这里；其余链路通过 Transcriber 接口不受影响。
@@ -13,10 +13,14 @@
 
 from __future__ import annotations
 
+import gc
+import logging
 from pathlib import Path
 
 from .base import Transcriber, TranscriptResult
 from ..result import Err, Ok, Result
+
+logger = logging.getLogger("ashare.asr")
 
 
 def _result_text(result) -> str:
@@ -60,6 +64,14 @@ class Qwen3Transcriber(Transcriber):
                 self._engine = self._load_transformers()
         return self._engine
 
+    def release(self) -> None:
+        """断开模型引用并清理后端缓存，使下一次转写重新加载。"""
+        if self._engine is None:
+            return
+        self._engine = None
+        gc.collect()
+        _clear_backend_cache(self._backend)
+
     def _load_mlx(self):
         """MLX 后端：mlx-audio 的 load_model + generate_transcription（按官方模型卡）。"""
         import os
@@ -68,7 +80,7 @@ class Qwen3Transcriber(Transcriber):
         from mlx_audio.stt.utils import load_model  # type: ignore
         from mlx_audio.stt.generate import generate_transcription  # type: ignore
 
-        model = load_model(self._model_id)  # 接受本地路径或 HF 名；只加载一次
+        model = load_model(self._model_id)  # 接受本地路径或 HF 名；本轮只加载一次
         tmp_out = os.path.join(tempfile.gettempdir(), "ashare_asr_out")
 
         def run(wav: str) -> str:
@@ -99,3 +111,19 @@ class Qwen3Transcriber(Transcriber):
             return _result_text(out)
 
         return run
+
+
+def _clear_backend_cache(backend: str) -> None:
+    """尽力释放推理后端缓存；清理失败不影响业务结果。"""
+    try:
+        if backend == "mlx":
+            import mlx.core as mx  # type: ignore
+
+            mx.clear_cache()
+        elif backend == "transformers":
+            import torch  # type: ignore
+
+            if torch.backends.mps.is_available():
+                torch.mps.empty_cache()
+    except Exception:
+        logger.warning("ASR 后端缓存清理失败", exc_info=True)
