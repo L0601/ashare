@@ -60,6 +60,11 @@ class TelegramConfig(BaseModel):
     chat_id: str = ""
 
 
+class WeComConfig(BaseModel):
+    enabled: bool = False
+    webhook_url: str = ""
+
+
 class AppConfig(BaseModel):
     douyin: DouyinConfig
     llm: LLMConfig
@@ -68,6 +73,7 @@ class AppConfig(BaseModel):
     storage: StorageConfig = Field(default_factory=StorageConfig)
     web: WebConfig = Field(default_factory=WebConfig)
     telegram: TelegramConfig = Field(default_factory=TelegramConfig)
+    wecom: WeComConfig = Field(default_factory=WeComConfig)
 
     @property
     def db_path(self) -> Path:
@@ -95,6 +101,8 @@ EDITABLE_SETTINGS = [
      "label": "Telegram Bot Token", "secret": True},
     {"key": "telegram_chat_id", "section": "telegram", "field": "chat_id", "type": "str",
      "label": "Telegram Chat ID"},
+    {"key": "wecom_enabled", "section": "wecom", "field": "enabled", "type": "bool",
+     "label": "企业微信推送"},
 ]
 
 

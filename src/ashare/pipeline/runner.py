@@ -21,8 +21,7 @@ from ..douyin.base import DouyinClient
 from ..llm.extractor import LLMExtractor
 from ..media.audio import extract_audio, probe_duration
 from ..models import Stage, Status, Transcript, Video
-from ..notify.base import Notifier, NoopNotifier, make_notifier
-from ..notify.telegram import build_message
+from ..notify.base import NotificationPayload, Notifier, make_notifiers
 from ..result import Err, Ok, Result
 from ..storage import video_dir
 
@@ -37,6 +36,7 @@ class Pipeline:
         extractor: LLMExtractor,
         *,
         notifier: Notifier | None = None,
+        notifiers: list[Notifier] | None = None,
         download_fn: Callable = None,
         extract_audio_fn: Callable = extract_audio,
         probe_fn: Callable = probe_duration,
@@ -47,7 +47,9 @@ class Pipeline:
         self.client = client
         self.transcriber = transcriber
         self.extractor = extractor
-        self.notifier = notifier or NoopNotifier()
+        if notifier is not None and notifiers is not None:
+            raise ValueError("notifier 与 notifiers 不能同时传入")
+        self.notifiers = list(notifiers or ([notifier] if notifier else []))
         self._download_fn = download_fn or _default_download
         self._extract_audio_fn = extract_audio_fn
         self._probe_fn = probe_fn
@@ -162,12 +164,28 @@ class Pipeline:
         return Ok(None)
 
     def _notify(self, video: Video) -> Result[None, str]:
-        """把结果推送到 Telegram（未启用时 NoopNotifier 直接成功）。"""
+        """推送全部启用渠道；已成功的渠道幂等跳过。"""
         fresh = self.db.get_video(video.aweme_id) or video   # 取回 extract 回填后的标题
         transcript = self.db.get_transcript(video.aweme_id)
         analysis = self.db.get_analysis(video.aweme_id)
-        msg = build_message(fresh, transcript.text if transcript else "", analysis)
-        return self.notifier.send(msg)
+        payload = NotificationPayload(
+            fresh, transcript.text if transcript else "", analysis,
+        )
+        errors = []
+        for notifier in self.notifiers:
+            channel = notifier.channel
+            if self.db.get_notification_status(video.aweme_id, channel) == Status.SUCCESS:
+                continue
+            self.db.set_notification_delivery(video.aweme_id, channel, Status.RUNNING)
+            result = notifier.send(payload)
+            if result.is_ok():
+                self.db.set_notification_delivery(video.aweme_id, channel, Status.SUCCESS)
+                continue
+            self.db.set_notification_delivery(
+                video.aweme_id, channel, Status.FAILED, error=str(result.error),
+            )
+            errors.append(f"{channel}: {result.error}")
+        return Err("；".join(errors)) if errors else Ok(None)
 
     # ---------- 路径 ----------
     def _dir(self, aweme_id: str) -> Path:
@@ -217,5 +235,5 @@ def build_pipeline(cfg: AppConfig, db: Database | None = None) -> Pipeline:
         client=F2DouyinClient(cfg),
         transcriber=make_transcriber(cfg.asr),
         extractor=LLMExtractor(cfg.llm),
-        notifier=make_notifier(cfg.telegram),
+        notifiers=make_notifiers(cfg),
     )

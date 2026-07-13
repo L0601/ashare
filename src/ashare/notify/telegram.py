@@ -15,6 +15,7 @@ from typing import Callable
 
 from ..models import Analysis, Stance, Video
 from ..result import Err, Ok, Result
+from .base import NotificationPayload, Notifier
 
 _BJ_TZ = timezone(timedelta(hours=8))
 _TG_LIMIT = 4000  # 留余量（Telegram 上限 4096）
@@ -85,7 +86,9 @@ def split_message(text: str, limit: int = _TG_LIMIT) -> list[str]:
     return chunks or [""]
 
 
-class TelegramNotifier:
+class TelegramNotifier(Notifier):
+    channel = "telegram"
+
     def __init__(self, bot_token: str, chat_id: str, *,
                  poster: Callable[[str, dict], dict] | None = None,
                  sleep: Callable[[float], None] = time.sleep):
@@ -97,7 +100,8 @@ class TelegramNotifier:
     def enabled(self) -> bool:
         return True
 
-    def send(self, text: str) -> Result[None, str]:
+    def send(self, message: NotificationPayload | str) -> Result[None, str]:
+        text = _render(message)
         chunks = split_message(text)
         for i, chunk in enumerate(chunks):
             res = self._post(chunk)
@@ -121,6 +125,12 @@ class TelegramNotifier:
                 last = str(e)
             self._sleep(1)
         return Err(f"Telegram 发送失败：{last}")
+
+
+def _render(message: NotificationPayload | str) -> str:
+    if isinstance(message, str):
+        return message
+    return build_message(message.video, message.transcript_text, message.analysis)
 
 
 def _httpx_poster(url: str, payload: dict) -> dict:

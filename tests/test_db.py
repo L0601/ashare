@@ -83,6 +83,24 @@ def test_stage_records_error_on_failure(db):
     assert stages["transcribe"]["error"] == "模型加载失败"
 
 
+def test_notification_delivery_tracks_each_channel_and_attempts(db):
+    assert db.get_notification_status("v1", "telegram") == Status.PENDING
+
+    db.set_notification_delivery("v1", "telegram", Status.RUNNING)
+    db.set_notification_delivery("v1", "telegram", Status.FAILED, error="网络错误")
+
+    assert db.get_notification_status("v1", "telegram") == Status.FAILED
+    delivery = db.get_notification_deliveries("v1")["telegram"]
+    assert delivery["attempts"] == 1
+    assert delivery["error"] == "网络错误"
+
+    db.set_notification_delivery("v1", "telegram", Status.RUNNING)
+    db.set_notification_delivery("v1", "telegram", Status.SUCCESS)
+
+    assert db.get_notification_status("v1", "telegram") == Status.SUCCESS
+    assert db.get_notification_deliveries("v1")["telegram"]["attempts"] == 2
+
+
 def test_save_and_get_transcript(db):
     db.save_transcript(Transcript("v1", "今天看好新能源", "fake", audio_seconds=12.5))
     t = db.get_transcript("v1")
@@ -199,6 +217,7 @@ def test_settings_get_set(db):
 def test_delete_video_removes_all_records(db):
     db.upsert_video(_video("v1"))
     db.set_stage("v1", Stage.DOWNLOAD, Status.SUCCESS)
+    db.set_notification_delivery("v1", "telegram", Status.SUCCESS)
     db.save_transcript(Transcript("v1", "文本", "fake"))
     db.save_analysis(Analysis("v1", "m", "in", "out",
                               opinions=[Opinion("A", TargetType.STOCK, Stance.BULLISH, "x")]))
@@ -209,6 +228,7 @@ def test_delete_video_removes_all_records(db):
     assert db.get_analysis("v1") is None
     assert db.get_opinions("v1") == []
     assert db.get_stage_status("v1", Stage.DOWNLOAD) == Status.PENDING
+    assert db.get_notification_status("v1", "telegram") == Status.PENDING
     assert db.get_video("v2") is not None   # v2 还在
 
 
@@ -224,6 +244,7 @@ def test_reset_keeps_settings(db):
 def test_reset_clears_all_data(db):
     db.upsert_video(_video())
     db.set_stage("v1", Stage.DOWNLOAD, Status.SUCCESS)
+    db.set_notification_delivery("v1", "wecom", Status.SUCCESS)
     db.save_transcript(Transcript("v1", "文本", "fake"))
     assert db.list_videos()
     db.reset()
@@ -232,6 +253,7 @@ def test_reset_clears_all_data(db):
     assert db.known_aweme_ids() == set()
     assert db.get_transcript("v1") is None
     assert db.get_stage_status("v1", Stage.DOWNLOAD) == Status.PENDING
+    assert db.get_notification_status("v1", "wecom") == Status.PENDING
 
 
 def test_poll_run_lifecycle(db):

@@ -19,6 +19,19 @@ from .base import Transcriber, TranscriptResult
 from ..result import Err, Ok, Result
 
 
+def _result_text(result) -> str:
+    """从 ASR 返回值中提取正文；空文本保持为空，不回退到对象 repr。"""
+    if result is None:
+        return ""
+    if isinstance(result, str):
+        return result.strip()
+    if isinstance(result, dict):
+        value = result.get("text", "")
+    else:
+        value = getattr(result, "text", "")
+    return str(value).strip() if value is not None else ""
+
+
 class Qwen3Transcriber(Transcriber):
     def __init__(self, model: str, backend: str = "mlx", language: str = "Chinese"):
         self._model_id = model
@@ -62,7 +75,7 @@ class Qwen3Transcriber(Transcriber):
             result = generate_transcription(
                 model=model, audio=wav, output_path=tmp_out, format="txt", verbose=False,
             )
-            return getattr(result, "text", None) or str(result)
+            return _result_text(result)
 
         return run
 
@@ -83,6 +96,6 @@ class Qwen3Transcriber(Transcriber):
 
         def run(wav: str) -> str:
             out = pipe(wav, generate_kwargs={"language": lang})
-            return out["text"] if isinstance(out, dict) else str(out)
+            return _result_text(out)
 
         return run

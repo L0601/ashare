@@ -1,5 +1,16 @@
-"""推送层：把分析结果发到 Telegram（接口 + 实现 + Fake/Noop）。"""
+"""推送层：把分析结果发送到 Telegram、企业微信等渠道。"""
 
-from .base import FakeNotifier, NoopNotifier, Notifier, make_notifier
+from .base import (
+    FakeNotifier,
+    NoopNotifier,
+    NotificationPayload,
+    Notifier,
+    make_notifier,
+    make_notifiers,
+)
+from .wecom import WeComNotifier
 
-__all__ = ["Notifier", "FakeNotifier", "NoopNotifier", "make_notifier"]
+__all__ = [
+    "Notifier", "NotificationPayload", "FakeNotifier", "NoopNotifier",
+    "WeComNotifier", "make_notifier", "make_notifiers",
+]

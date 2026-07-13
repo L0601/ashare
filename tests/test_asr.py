@@ -3,6 +3,7 @@
 import pytest
 
 from ashare.asr.base import FakeTranscriber, make_transcriber
+from ashare.asr.qwen3 import _result_text
 from ashare.config import ASRConfig
 from ashare.result import Ok
 
@@ -22,3 +23,13 @@ def test_make_transcriber_fake():
 def test_make_transcriber_unknown():
     with pytest.raises(ValueError):
         make_transcriber(ASRConfig(engine="bogus"))
+
+
+def test_qwen3_result_text_prefers_empty_text_field():
+    class DummyResult:
+        text = ""
+
+        def __str__(self):
+            return "STTOutput(text='', segments=[...])"
+
+    assert _result_text(DummyResult()) == ""

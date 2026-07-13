@@ -4,7 +4,7 @@
 
 ```
 发现最新视频 → 下载无水印 mp4 → ffmpeg 抽音轨(16k 单声道)
-  → 本地 Qwen3-ASR-1.7B 转写 → 云端 LLM 抽取行业/个股观点 → 推送 Telegram
+  → 本地 Qwen3-ASR-1.7B 转写 → 云端 LLM 抽取行业/个股观点 → 推送 Telegram / 企业微信
 ```
 
 全程留痕（视频链接、标题、抽取时间、转写文字、AI 输入/输出、各阶段状态），数据存
@@ -21,7 +21,7 @@ SQLite，中间文件按视频分目录存放，并提供 **Web 后台**（看�
 | `src/ashare/media/audio.py` | ffmpeg 抽音轨（命令构造与执行分离） |
 | `src/ashare/asr/` | 语音转写：接口 + Qwen3-ASR（MLX/transformers）+ Fake |
 | `src/ashare/llm/` | LLM 抽取：prompt + 兼容 OpenAI 调用 + 防御性 JSON 解析 |
-| `src/ashare/notify/` | 推送层：Telegram 发送 + HTML 消息构造（`telegram.py`），抽象接口 + Fake/Noop |
+| `src/ashare/notify/` | 推送层：中立通知载荷 + Telegram / 企业微信群机器人渲染与发送 + Fake/Noop |
 | `src/ashare/pipeline/` | 流水线状态机（`runner.py`，含 NOTIFY 阶段，幂等续跑）+ 定时调度（`scheduler.py`） |
 | `src/ashare/web/` | Web 后台：FastAPI 接口（`app.py`）+ 数据装配（`service.py`）+ 后台单飞拉取（`pull.py`）+ 自包含单页（`templates/dashboard.html`） |
 | `src/ashare/cli.py` | 命令行入口（运行 / 调度 / 诊断 / 重置） |
@@ -56,14 +56,15 @@ cp config.example.yaml config.yaml   # config.yaml 已被 .gitignore 忽略
 - `asr.model`：模型名或本地路径（如 `mlx-community/Qwen3-ASR-1.7B-8bit`，或已下载到本地的目录）
 - `douyin.user_agent`：默认桌面浏览器 UA（已与 web 接口/cookie 来源一致），一般无需改
 - `telegram.enabled` / `telegram.bot_token` / `telegram.chat_id`：视频处理完成后推送到 Telegram（群 id 为负数）
+- `wecom.enabled` / `wecom.webhook_url`：视频处理完成后推送到企业微信群机器人；webhook 只写本地配置，禁止提交 Git
 
 敏感信息只存在 `config.yaml`，不入 git。
 
 **运行时配置（Web 后台可改，存数据库覆盖文件）**：`cookie`、`author_sec_uid`、`latest_count`、
-`poll_interval_minutes`、`telegram_enabled` / `telegram_bot_token` / `telegram_chat_id`
+`poll_interval_minutes`、`telegram_enabled` / `telegram_bot_token` / `telegram_chat_id`、`wecom_enabled`
 这几项常改的配置可在看板「设置」抽屉里修改，保存即生效，
 存于 SQLite `settings` 表并覆盖文件默认值（"清空所有数据"不会清掉它们）。UA、LLM 密钥/端点、
-ASR 模型路径等固化项不进后台，仍改 `config.yaml`。
+ASR 模型路径、企业微信 webhook 等固化/敏感项不进后台，仍改 `config.yaml`；修改文件配置后需重启进程。
 
 ## 使用
 
@@ -106,14 +107,18 @@ ashare reset-db [--files]              # 重置：清空数据（--files 连带�
 - 抓取失败（含风控/签名失效）按可恢复错误记录到 `poll_runs`，不硬刚重试
 - 抓取层会多取并按发布时间倒序，规避置顶视频占用「最新 N 条」名额
 
-## Telegram 推送
+## 多渠道推送
 
-视频**完整处理完成**（转写 + 抽取）后，NOTIFY 阶段把结果推送到 Telegram：消息含**作者、原视频链接、
-发布时间、整体摘要、板块、逐条观点、口播全文**（HTML 格式；超 4096 自动拆条）。
+视频**完整处理完成**（转写 + 抽取）后，NOTIFY 阶段把结果推送到全部启用渠道。消息含**作者、原视频链接、
+发布时间、整体摘要、板块、逐条观点、口播全文**；Telegram 使用 HTML，企业微信使用 Markdown，超长内容
+按各渠道限制自动拆条。企业微信按 UTF-8 字节拆分并限制请求速率，避免超过单 webhook 20 条/分钟。
 
 - 配置 `telegram.enabled/bot_token/chat_id`（或在 Web 后台「设置」里填）即生效。
-- 推送是流水线的一个阶段，**幂等**：已推送成功的视频重跑不会重复发；推送失败下次重试。
+- 企业微信真实地址仅配置在 `wecom.webhook_url`；Web 后台只提供 `wecom_enabled` 开关，不读取或返回地址。
+- Telegram 与企业微信可同时启用。系统按视频、渠道记录投递状态；一个渠道失败时仍会尝试其他渠道，
+  下次只重试失败渠道。全部启用渠道成功后，NOTIFY 阶段才成功。
 - **历史不回溯**：开启推送前已完成的老视频不会被补发（它们不会被重新处理）。
+- webhook URL 含访问密钥，不会写入日志；请勿提交到 GitHub、博客或其他公开位置。
 
 ## 续跑与幂等
 

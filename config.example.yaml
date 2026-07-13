@@ -52,3 +52,8 @@ telegram:
   enabled: false
   bot_token: ""      # BotFather 给的 token，形如 123456789:AAxxxxxxxxxxxxxxxxxxxxxxxxxxxx
   chat_id: ""        # 目标会话/群 id（群为负数，形如 -1001234567890）
+
+wecom:
+  # 企业微信群机器人推送。Web 后台只提供开关，webhook 必须保存在本地 config.yaml。
+  enabled: false
+  webhook_url: ""    # https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=YOUR_KEY

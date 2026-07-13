@@ -19,7 +19,7 @@ class Stage(str, Enum):
     EXTRACT_AUDIO = "extract_audio"  # 抽音轨：ffmpeg -> 16k 单声道 wav
     TRANSCRIBE = "transcribe"    # 转写：Qwen3-ASR 语音转文字
     EXTRACT = "extract"          # 抽取：LLM 提取金融观点
-    NOTIFY = "notify"            # 推送：把结果发到 Telegram
+    NOTIFY = "notify"            # 推送：把结果发到全部启用渠道
 
     @classmethod
     def ordered(cls) -> list["Stage"]:

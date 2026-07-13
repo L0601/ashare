@@ -85,7 +85,9 @@ def test_get_settings_lists_editable(tmp_path):
     data = c.get("/api/settings").json()
     keys = {s["key"] for s in data["settings"]}
     assert keys == {"cookie", "author_sec_uid", "latest_count", "poll_interval_minutes",
-                    "telegram_enabled", "telegram_bot_token", "telegram_chat_id"}
+                    "telegram_enabled", "telegram_bot_token", "telegram_chat_id",
+                    "wecom_enabled"}
+    assert "wecom_webhook_url" not in keys
 
 
 def test_save_settings_persists(tmp_path):

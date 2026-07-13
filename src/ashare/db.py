@@ -50,6 +50,17 @@ CREATE TABLE IF NOT EXISTS stage_runs (
     attempts INTEGER DEFAULT 0,
     UNIQUE(aweme_id, stage)
 );
+CREATE TABLE IF NOT EXISTS notification_deliveries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    aweme_id TEXT NOT NULL,
+    channel TEXT NOT NULL,
+    status TEXT NOT NULL,
+    error TEXT DEFAULT '',
+    started_at INTEGER,
+    finished_at INTEGER,
+    attempts INTEGER DEFAULT 0,
+    UNIQUE(aweme_id, channel)
+);
 CREATE TABLE IF NOT EXISTS transcripts (
     aweme_id TEXT PRIMARY KEY,
     text TEXT NOT NULL,
@@ -121,7 +132,10 @@ class Database:
         self.conn.close()
 
     # 所有业务表，供重置使用
-    _TABLES = ("videos", "stage_runs", "transcripts", "analyses", "opinions", "poll_runs")
+    _TABLES = (
+        "videos", "stage_runs", "notification_deliveries", "transcripts",
+        "analyses", "opinions", "poll_runs",
+    )
 
     def reset(self) -> None:
         """删除所有表并重建空表（清空全部数据）。"""
@@ -217,6 +231,42 @@ class Database:
             "SELECT * FROM stage_runs WHERE aweme_id=?", (aweme_id,)
         ).fetchall()
         return {r["stage"]: dict(r) for r in rows}
+
+    # ---------- notification_deliveries ----------
+    def set_notification_delivery(
+        self, aweme_id: str, channel: str, status: Status, error: str = ""
+    ) -> None:
+        """记录单个渠道的投递状态；running 时刷新开始时间并增加尝试次数。"""
+        now = self._clock()
+        started = now if status == Status.RUNNING else None
+        finished = now if status in (Status.SUCCESS, Status.FAILED) else None
+        self.conn.execute(
+            """INSERT INTO notification_deliveries
+                   (aweme_id, channel, status, error, started_at, finished_at, attempts)
+               VALUES (?,?,?,?,?,?,?)
+               ON CONFLICT(aweme_id, channel) DO UPDATE SET
+                   status=excluded.status, error=excluded.error,
+                   started_at=COALESCE(excluded.started_at, notification_deliveries.started_at),
+                   finished_at=excluded.finished_at,
+                   attempts=notification_deliveries.attempts +
+                       (CASE WHEN excluded.status='running' THEN 1 ELSE 0 END)""",
+            (aweme_id, channel, status.value, error, started, finished,
+             1 if status == Status.RUNNING else 0),
+        )
+        self.conn.commit()
+
+    def get_notification_status(self, aweme_id: str, channel: str) -> Status:
+        row = self.conn.execute(
+            "SELECT status FROM notification_deliveries WHERE aweme_id=? AND channel=?",
+            (aweme_id, channel),
+        ).fetchone()
+        return Status(row["status"]) if row else Status.PENDING
+
+    def get_notification_deliveries(self, aweme_id: str) -> dict[str, dict]:
+        rows = self.conn.execute(
+            "SELECT * FROM notification_deliveries WHERE aweme_id=?", (aweme_id,)
+        ).fetchall()
+        return {row["channel"]: dict(row) for row in rows}
 
     # ---------- transcripts ----------
     def save_transcript(self, t: Transcript) -> None:
@@ -330,7 +380,10 @@ class Database:
     # ---------- 单条数据删除 ----------
     def delete_video(self, aweme_id: str) -> None:
         """删除该视频在所有数据表中的记录（不含 settings/poll_runs 全局表）。"""
-        for t in ("videos", "stage_runs", "transcripts", "analyses", "opinions"):
+        for t in (
+            "videos", "stage_runs", "notification_deliveries", "transcripts",
+            "analyses", "opinions",
+        ):
             self.conn.execute(f"DELETE FROM {t} WHERE aweme_id=?", (aweme_id,))
         self.conn.commit()
 

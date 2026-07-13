@@ -28,6 +28,8 @@ def test_load_config_ok(tmp_path):
     # 未提供的项走默认值
     assert cfg.douyin.latest_count == 10
     assert cfg.schedule.poll_interval_minutes == 90
+    assert cfg.wecom.enabled is False
+    assert cfg.wecom.webhook_url == ""
 
 
 def test_load_config_paths(tmp_path):
@@ -55,6 +57,7 @@ def test_apply_overrides_maps_db_values(tmp_path):
         "cookie": "new_ck", "author_sec_uid": "MS4w_new",
         "latest_count": "20", "poll_interval_minutes": "120",
         "telegram_enabled": "1", "telegram_bot_token": "tok", "telegram_chat_id": "-100",
+        "wecom_enabled": "1",
     })
     assert eff.douyin.cookie == "new_ck"
     assert eff.douyin.author_sec_uid == "MS4w_new"
@@ -63,6 +66,7 @@ def test_apply_overrides_maps_db_values(tmp_path):
     assert eff.telegram.enabled is True           # "1" → bool True
     assert eff.telegram.bot_token == "tok"
     assert eff.telegram.chat_id == "-100"
+    assert eff.wecom.enabled is True
 
 
 def test_apply_overrides_bool_false(tmp_path):
@@ -86,4 +90,5 @@ def test_editable_values_reads_effective(tmp_path):
     assert vals["author_sec_uid"] == "sec123"
     assert vals["latest_count"] == 10
     assert set(vals) == {"cookie", "author_sec_uid", "latest_count", "poll_interval_minutes",
-                         "telegram_enabled", "telegram_bot_token", "telegram_chat_id"}
+                         "telegram_enabled", "telegram_bot_token", "telegram_chat_id",
+                         "wecom_enabled"}

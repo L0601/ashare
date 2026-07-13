@@ -3,6 +3,7 @@
 全部用 fake 依赖，不联网、不碰真实模型/ffmpeg。
 """
 
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -149,7 +150,7 @@ def test_existing_title_not_overwritten(tmp_path):
 
 
 def test_notify_stage_pushes_on_success(tmp_path):
-    """视频跑完，NOTIFY 阶段用 FakeNotifier 推送一条含标题/作者/观点的消息。"""
+    """视频跑完，NOTIFY 阶段向渠道传入完整的中立通知载荷。"""
     from ashare.notify.base import FakeNotifier
     from ashare.pipeline.runner import Pipeline
 
@@ -178,8 +179,10 @@ def test_notify_stage_pushes_on_success(tmp_path):
     assert pipe.process_video(db.get_video("v1")) is True
     assert db.get_stage_status("v1", Stage.NOTIFY) == Status.SUCCESS
     assert len(fake_notifier.sent) == 1
-    msg = fake_notifier.sent[0]
-    assert "创业魔法师" in msg and "宁德时代" in msg and "我看好新能源" in msg
+    payload = fake_notifier.sent[0]
+    assert payload.video.author_name == "创业魔法师"
+    assert payload.analysis.opinions[0].target_name == "宁德时代"
+    assert payload.transcript_text == "我看好新能源"
 
 
 def test_notify_failure_marks_video_failed(tmp_path):
@@ -216,6 +219,59 @@ def test_notify_failure_marks_video_failed(tmp_path):
     assert db.get_stage_status("v1", Stage.EXTRACT) == Status.SUCCESS   # 抽取已完成
     assert db.get_stage_status("v1", Stage.NOTIFY) == Status.FAILED
     assert db.get_video("v1").overall_status == Status.FAILED
+
+
+def test_notify_retry_skips_channel_that_already_succeeded(tmp_path):
+    """一个渠道失败时，续跑只重试失败渠道，不重复发送已成功渠道。"""
+    from ashare.notify.base import FakeNotifier, Notifier
+    from ashare.pipeline.runner import Pipeline
+    from ashare.result import Err as _Err
+
+    class FlakyNotifier(Notifier):
+        channel = "wecom"
+
+        def __init__(self):
+            self.calls = 0
+
+        def send(self, payload):
+            self.calls += 1
+            return _Err("网络错误") if self.calls == 1 else Ok(None)
+
+    cfg = _cfg(tmp_path)
+    db = Database(":memory:", clock=lambda: 1000)
+    telegram = FakeNotifier(channel="telegram")
+    wecom = FlakyNotifier()
+    videos = [Video("v1", "sec1", "标题", "https://d/v1", publish_time=200,
+                    download_url="http://x/1.mp4")]
+
+    def ok_dl(url, dest, **kw):
+        Path(dest).write_bytes(b"V")
+        return Ok(Path(dest))
+
+    def ok_au(src, dst, **kw):
+        Path(dst).write_bytes(b"W")
+        return Ok(Path(dst))
+
+    pipe = Pipeline(
+        cfg=cfg, db=db, client=FakeDouyinClient(sec_uid="sec1", videos=videos),
+        transcriber=FakeTranscriber("原文"),
+        extractor=LLMExtractor(cfg.llm, client=_fake_llm_client()),
+        notifiers=[wecom, telegram],
+        download_fn=ok_dl, extract_audio_fn=ok_au,
+        probe_fn=lambda p: 1.0, pace=lambda: None,
+    )
+    pipe.discover()
+
+    assert pipe.process_video(db.get_video("v1")) is False
+    assert len(telegram.sent) == 1
+    assert wecom.calls == 1
+    assert db.get_notification_status("v1", "telegram") == Status.SUCCESS
+    assert db.get_notification_status("v1", "wecom") == Status.FAILED
+
+    assert pipe.process_video(db.get_video("v1")) is True
+    assert len(telegram.sent) == 1
+    assert wecom.calls == 2
+    assert db.get_notification_status("v1", "wecom") == Status.SUCCESS
 
 
 def test_stage_failure_stops_chain(tmp_path):
