@@ -18,7 +18,7 @@ from ..asr.base import Transcriber, make_transcriber
 from ..config import AppConfig
 from ..db import Database
 from ..douyin.base import DouyinClient
-from ..llm.extractor import LLMExtractor
+from ..llm.extractor import LLMExtractor, make_extractor
 from ..media.audio import extract_audio, probe_duration
 from ..models import Stage, Status, Transcript, Video
 from ..notify.base import NotificationPayload, Notifier, make_notifiers
@@ -241,6 +241,6 @@ def build_pipeline(cfg: AppConfig, db: Database | None = None) -> Pipeline:
         db=database,
         client=F2DouyinClient(cfg),
         transcriber=make_transcriber(cfg.asr),
-        extractor=LLMExtractor(cfg.llm),
+        extractor=make_extractor(cfg.llm),
         notifiers=make_notifiers(cfg),
     )

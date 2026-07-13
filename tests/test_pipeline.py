@@ -396,3 +396,23 @@ def test_run_once_releases_transcriber_when_discovery_fails(tmp_path):
     pipe.run_once()
 
     assert transcriber.release_count == 1
+
+
+def test_build_pipeline_uses_preferred_extractor_factory(tmp_path, monkeypatch):
+    from ashare.pipeline import runner
+
+    cfg = _cfg(tmp_path)
+    db = Database(":memory:", clock=lambda: 1000)
+    preferred = SimpleNamespace(extract=lambda *args: Err("unused"))
+    seen = []
+
+    def factory(llm_cfg):
+        seen.append(llm_cfg)
+        return preferred
+
+    monkeypatch.setattr(runner, "make_extractor", factory, raising=False)
+
+    pipeline = runner.build_pipeline(cfg, db=db)
+
+    assert pipeline.extractor is preferred
+    assert seen == [cfg.llm]

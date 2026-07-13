@@ -75,15 +75,15 @@ def run_once(limit: int = typer.Option(None, help="本轮最多处理几条（�
 
 @app.command("check-llm")
 def check_llm():
-    """[诊断] 用一段内置样例文本调用 LLM，验证连通性与观点抽取。不联网抖音、不跑模型。"""
-    from .llm.extractor import LLMExtractor
+    """[诊断] 用内置样例验证 Codex 优先与 LLM 回退；不联网抖音、不跑 ASR。"""
+    from .llm.extractor import make_extractor
 
     sample = ("大家好，我今天重点看好半导体板块，国产替代是确定性趋势，中芯国际我特别看好。"
               "另外新能源短期我偏谨慎，产能有点过剩，光伏价格战还在打。")
     cfg = load_config()
-    res = LLMExtractor(cfg.llm).extract("diag", "诊断样例", sample)
+    res = make_extractor(cfg.llm).extract("diag", "诊断样例", sample)
     if not res.is_ok():
-        typer.echo(f"LLM 调用失败：{res.error}", err=True)
+        typer.echo(f"观点分析失败：{res.error}", err=True)
         raise typer.Exit(code=1)
     a = res.value
     typer.echo(f"✓ LLM 连通（model={a.llm_model}）")

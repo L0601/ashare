@@ -85,7 +85,7 @@ ashare schedule
 ```bash
 source .venv/bin/activate
 
-# 步骤1：验证 LLM 连通（只需 llm.api_key；用内置样例文本，不联网抖音、不跑模型）
+# 步骤1：验证观点分析（优先 ~/clean-codex，失败回退 llm.*；不联网抖音、不跑 ASR）
 ashare check-llm
 
 # 步骤2：验证抖音抓取（需 douyin.cookie + author_sec_uid；只读列表，不下载）

@@ -1,4 +1,4 @@
-"""调用兼容 OpenAI 的 LLM 抽取金融观点 + 防御性解析。
+"""Codex 优先、兼容 OpenAI 的 LLM 兜底，并做防御性解析。
 
 解析逻辑是核心（可单测）：从 LLM 文本里抠出 JSON、做枚举归一化、容错。
 网络调用是 IO，与解析分离；调用失败/解析失败都用 Result 表达。
@@ -7,13 +7,17 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from dataclasses import dataclass, field
+from typing import Protocol
 
 from ..config import LLMConfig
 from ..models import Analysis, Opinion, Stance, TargetType
 from ..result import Err, Ok, Result
 from .prompts import SYSTEM_PROMPT, build_user_prompt
+
+logger = logging.getLogger("ashare.llm")
 
 # 枚举归一化：兼容中英文与常见同义表达
 _STANCE_MAP = {
@@ -36,6 +40,14 @@ class ParsedAnalysis:
     summary: str = ""
     sectors: list[str] = field(default_factory=list)
     opinions: list[Opinion] = field(default_factory=list)
+
+
+class TextGenerationBackend(Protocol):
+    """可插拔文本生成后端；抽取器负责统一解析和落业务模型。"""
+
+    model_name: str
+
+    def generate(self, system_prompt: str, user_prompt: str) -> Result[str, str]: ...
 
 
 def _normalize_stance(value: str) -> Stance:
@@ -102,9 +114,13 @@ def _safe_float(value) -> float:
 class LLMExtractor:
     """封装兼容 OpenAI 的 LLM 调用 + 解析，产出可落库的 Analysis。"""
 
-    def __init__(self, cfg: LLMConfig, client=None):
+    def __init__(
+        self, cfg: LLMConfig, client=None,
+        primary: TextGenerationBackend | None = None,
+    ):
         self._cfg = cfg
         self._client = client  # 可注入假 client 测试
+        self._primary = primary
 
     def _ensure_client(self):
         if self._client is None:
@@ -121,26 +137,42 @@ class LLMExtractor:
         这样流水线可正常完成、看板可见原始输出。仅 LLM 调用本身失败才返回 Err（可重试）。
         """
         user_prompt = build_user_prompt(title, transcript)
+        primary, primary_error = self._try_primary(aweme_id, user_prompt)
+        if primary is not None:
+            return Ok(primary)
+        if primary_error:
+            logger.warning("Codex 不可用，回退现有 LLM：%s", primary_error)
         try:
             raw = self._call(user_prompt)
         except Exception as e:
-            return Err(f"LLM 调用失败：{e}")
+            fallback_error = f"LLM 调用失败：{e}"
+            if primary_error:
+                return Err(f"Codex 失败：{primary_error}；{fallback_error}")
+            return Err(fallback_error)
 
-        analysis = Analysis(
-            aweme_id=aweme_id, llm_model=self._cfg.model,
-            prompt_input=user_prompt, raw_output=raw,
-        )
         parsed = parse_llm_output(raw)
-        if parsed.is_ok():
-            analysis.title = parsed.value.title
-            analysis.summary = parsed.value.summary
-            analysis.sectors = parsed.value.sectors
-            analysis.opinions = parsed.value.opinions
-            for op in analysis.opinions:
-                op.aweme_id = aweme_id
-        else:
-            analysis.summary = f"(观点解析失败：{parsed.error}，请查看原始输出)"
-        return Ok(analysis)
+        return Ok(_build_analysis(
+            aweme_id, self._cfg.model, user_prompt, raw, parsed,
+        ))
+
+    def _try_primary(
+        self, aweme_id: str, user_prompt: str,
+    ) -> tuple[Analysis | None, str]:
+        if self._primary is None:
+            return None, ""
+        try:
+            generated = self._primary.generate(SYSTEM_PROMPT, user_prompt)
+        except Exception as error:
+            return None, f"{type(error).__name__}: {error}"
+        if not generated.is_ok():
+            return None, str(generated.error)
+        parsed = parse_llm_output(generated.value)
+        if not parsed.is_ok():
+            return None, str(parsed.error)
+        return _build_analysis(
+            aweme_id, self._primary.model_name, user_prompt,
+            generated.value, parsed,
+        ), ""
 
     def _call(self, user_prompt: str) -> str:
         resp = self._ensure_client().chat.completions.create(
@@ -153,3 +185,36 @@ class LLMExtractor:
             ],
         )
         return resp.choices[0].message.content or ""
+
+
+def _build_analysis(
+    aweme_id: str,
+    model_name: str,
+    user_prompt: str,
+    raw: str,
+    parsed: Result[ParsedAnalysis, str],
+) -> Analysis:
+    analysis = Analysis(
+        aweme_id=aweme_id, llm_model=model_name,
+        prompt_input=user_prompt, raw_output=raw,
+    )
+    if not parsed.is_ok():
+        analysis.summary = f"(观点解析失败：{parsed.error}，请查看原始输出)"
+        return analysis
+    analysis.title = parsed.value.title
+    analysis.summary = parsed.value.summary
+    analysis.sectors = parsed.value.sectors
+    analysis.opinions = parsed.value.opinions
+    for opinion in analysis.opinions:
+        opinion.aweme_id = aweme_id
+    return analysis
+
+
+def make_extractor(cfg: LLMConfig, *, client=None, detector=None) -> LLMExtractor:
+    """自动探测本机 Codex，并以现有 OpenAI-compatible LLM 作为兜底。"""
+    from .codex import CodexCLIBackend, detect_codex_runtime
+
+    detect = detector or detect_codex_runtime
+    runtime = detect(cfg.timeout)
+    primary = CodexCLIBackend(runtime) if runtime else None
+    return LLMExtractor(cfg, client=client, primary=primary)

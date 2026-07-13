@@ -110,3 +110,82 @@ def test_extractor_llm_call_failure_returns_err():
     r = LLMExtractor(_cfg(), client=Boom()).extract("v1", "t", "x")
     assert isinstance(r, Err)
     assert "LLM 调用失败" in r.error
+
+
+def test_extractor_prefers_valid_primary_backend():
+    class Primary:
+        model_name = "codex-cli"
+
+        def generate(self, system_prompt, user_prompt):
+            return Ok(GOOD)
+
+    class FallbackMustNotRun:
+        @property
+        def chat(self):
+            raise AssertionError("Codex 成功时不应调用现有 LLM")
+
+    result = LLMExtractor(
+        _cfg(), client=FallbackMustNotRun(), primary=Primary(),
+    ).extract("v1", "标题", "口播文字")
+
+    assert isinstance(result, Ok)
+    assert result.value.llm_model == "codex-cli"
+    assert result.value.raw_output == GOOD
+    assert len(result.value.opinions) == 2
+
+
+def test_extractor_falls_back_when_primary_backend_fails():
+    class FailedPrimary:
+        model_name = "codex-cli"
+
+        def generate(self, system_prompt, user_prompt):
+            raise RuntimeError("Codex 执行超时")
+
+    result = LLMExtractor(
+        _cfg(), client=_FakeClient(GOOD), primary=FailedPrimary(),
+    ).extract("v1", "标题", "口播文字")
+
+    assert isinstance(result, Ok)
+    assert result.value.llm_model == "m"
+    assert result.value.raw_output == GOOD
+
+
+def test_extractor_falls_back_when_primary_output_is_invalid():
+    class InvalidPrimary:
+        model_name = "codex-cli"
+
+        def generate(self, system_prompt, user_prompt):
+            return Ok("不是合法 JSON")
+
+    result = LLMExtractor(
+        _cfg(), client=_FakeClient(GOOD), primary=InvalidPrimary(),
+    ).extract("v1", "标题", "口播文字")
+
+    assert isinstance(result, Ok)
+    assert result.value.llm_model == "m"
+    assert result.value.raw_output == GOOD
+
+
+def test_extractor_reports_primary_and_fallback_failures():
+    class InvalidPrimary:
+        model_name = "codex-cli"
+
+        def generate(self, system_prompt, user_prompt):
+            return Ok("Codex 没有返回 JSON")
+
+    class FailedFallback:
+        def __init__(self):
+            self.chat = SimpleNamespace(completions=SimpleNamespace(
+                create=self._raise,
+            ))
+
+        def _raise(self, **kwargs):
+            raise RuntimeError("现有 LLM 网络超时")
+
+    result = LLMExtractor(
+        _cfg(), client=FailedFallback(), primary=InvalidPrimary(),
+    ).extract("v1", "标题", "口播文字")
+
+    assert isinstance(result, Err)
+    assert "未在 LLM 输出中找到 JSON" in result.error
+    assert "现有 LLM 网络超时" in result.error

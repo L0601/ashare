@@ -4,7 +4,8 @@
 
 ```
 发现最新视频 → 下载无水印 mp4 → ffmpeg 抽音轨(16k 单声道)
-  → 本地 Qwen3-ASR-1.7B 转写 → 云端 LLM 抽取行业/个股观点 → 推送 Telegram / 企业微信
+  → 本地 Qwen3-ASR-1.7B 转写 → Codex Agent 优先抽取观点（失败回退 LLM）
+  → 推送 Telegram / 企业微信
 ```
 
 全程留痕（视频链接、标题、抽取时间、转写文字、AI 输入/输出、各阶段状态），数据存
@@ -20,7 +21,7 @@ SQLite，中间文件按视频分目录存放，并提供 **Web 后台**（看�
 | `src/ashare/douyin/` | 抓取层：F2 封装（`client.py`，含 sec_uid/profile 解析）+ 无水印下载（`downloader.py`），抽象接口 + Fake |
 | `src/ashare/media/audio.py` | ffmpeg 抽音轨（命令构造与执行分离） |
 | `src/ashare/asr/` | 语音转写：接口 + Qwen3-ASR（MLX/transformers）+ Fake |
-| `src/ashare/llm/` | LLM 抽取：prompt + 兼容 OpenAI 调用 + 防御性 JSON 解析 |
+| `src/ashare/llm/` | 观点抽取：本机 Codex CLI Agent 优先 + 兼容 OpenAI LLM 兜底 + 防御性 JSON 解析 |
 | `src/ashare/notify/` | 推送层：中立通知载荷 + Telegram / 企业微信群机器人渲染与发送 + Fake/Noop |
 | `src/ashare/pipeline/` | 流水线状态机（`runner.py`，含 NOTIFY 阶段，幂等续跑）+ 定时调度（`scheduler.py`） |
 | `src/ashare/web/` | Web 后台：FastAPI 接口（`app.py`）+ 数据装配（`service.py`）+ 后台单飞拉取（`pull.py`）+ 自包含单页（`templates/dashboard.html`） |
@@ -60,6 +61,12 @@ cp config.example.yaml config.yaml   # config.yaml 已被 .gitignore 忽略
 
 敏感信息只存在 `config.yaml`，不入 git。
 
+观点分析会自动探测 `~/clean-codex` 和本机 `codex` 命令；两者可用时优先通过
+`CODEX_HOME=~/clean-codex codex exec` 分析转录文字。每条视频使用隔离、只读、无会话留存的临时执行，
+并用 JSON Schema 约束输出。Codex 缺失、未登录、超时、执行失败或输出不合法时，自动回退到上述
+`llm.*` 服务。这里的“本机 Codex”指在本机启动 Agent，推理仍使用该目录登录的 ChatGPT 云端账号，
+不是离线模型。
+
 **运行时配置（Web 后台可改，存数据库覆盖文件）**：`cookie`、`author_sec_uid`、`latest_count`、
 `poll_interval_minutes`、`telegram_enabled` / `telegram_bot_token` / `telegram_chat_id`、`wecom_enabled`
 这几项常改的配置可在看板「设置」抽屉里修改，保存即生效，
@@ -85,7 +92,7 @@ ashare schedule
 **诊断命令**（首次部署逐段验证，详见 `COMMANDS.md`）：
 
 ```bash
-ashare check-llm                       # 验 LLM 连通（内置样例，不联网抖音）
+ashare check-llm                       # 验 Codex 优先 + LLM 回退（内置样例，不联网抖音）
 ashare list-videos --count 5           # 验抓取：打印最新视频列表（只读不下载）
 ashare download-one "<视频链接>" --audio  # 验解析+下载+抽音轨（不跑 ASR/LLM）
 ashare check-asr data/videos/<YYYY-MM-DD>_<id>/audio.wav   # 验 Qwen3-ASR 转写
