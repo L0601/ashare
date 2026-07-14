@@ -1,5 +1,8 @@
 """ASR 接口单测：Fake 转写 + 工厂选择（不触碰真实模型）。"""
 
+import sys
+from types import ModuleType
+
 import pytest
 
 from ashare.asr.base import FakeTranscriber, make_transcriber
@@ -63,3 +66,30 @@ def test_qwen3_release_makes_next_transcription_reload_model(tmp_path, monkeypat
     assert cleared_backends == ["mlx"]
     assert transcriber.transcribe(wav).is_ok()
     assert transcriber.load_count == 2
+
+
+def test_mlx_transcription_limits_each_chunk_to_three_minutes(monkeypatch):
+    seen = {}
+    mlx_audio = ModuleType("mlx_audio")
+    mlx_audio.__path__ = []
+    stt = ModuleType("mlx_audio.stt")
+    stt.__path__ = []
+    utils = ModuleType("mlx_audio.stt.utils")
+    generate = ModuleType("mlx_audio.stt.generate")
+    utils.load_model = lambda model_id: object()
+
+    def fake_generate_transcription(**kwargs):
+        seen.update(kwargs)
+        return {"text": "转写结果"}
+
+    generate.generate_transcription = fake_generate_transcription
+    monkeypatch.setitem(sys.modules, "mlx_audio", mlx_audio)
+    monkeypatch.setitem(sys.modules, "mlx_audio.stt", stt)
+    monkeypatch.setitem(sys.modules, "mlx_audio.stt.utils", utils)
+    monkeypatch.setitem(sys.modules, "mlx_audio.stt.generate", generate)
+
+    engine = Qwen3Transcriber(model="fake-model", backend="mlx")._load_mlx()
+    result = engine("long-audio.wav")
+
+    assert result == "转写结果"
+    assert seen["chunk_duration"] == 180

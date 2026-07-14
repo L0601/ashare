@@ -21,6 +21,8 @@ from .base import Transcriber, TranscriptResult
 from ..result import Err, Ok, Result
 
 logger = logging.getLogger("ashare.asr")
+# mlx-audio 默认 20 分钟一段，长视频会产生过大的 Metal 推理峰值。
+MLX_CHUNK_SECONDS = 3 * 60
 
 
 def _result_text(result) -> str:
@@ -85,7 +87,8 @@ class Qwen3Transcriber(Transcriber):
 
         def run(wav: str) -> str:
             result = generate_transcription(
-                model=model, audio=wav, output_path=tmp_out, format="txt", verbose=False,
+                model=model, audio=wav, output_path=tmp_out, format="txt",
+                verbose=False, chunk_duration=MLX_CHUNK_SECONDS,
             )
             return _result_text(result)
 
