@@ -13,7 +13,7 @@ from zoneinfo import ZoneInfo
 from apscheduler.schedulers.blocking import BlockingScheduler
 
 from ..config import AppConfig
-from .runner import build_pipeline
+from .multi_user import run_all_users
 
 logger = logging.getLogger("ashare.scheduler")
 BEIJING_TZ = ZoneInfo("Asia/Shanghai")
@@ -31,8 +31,6 @@ def in_quiet_hours(now: datetime | None = None) -> bool:
 
 
 def run_scheduler(cfg: AppConfig) -> None:
-    pipeline = build_pipeline(cfg)
-
     def job() -> None:
         if in_quiet_hours():
             logger.info(
@@ -41,7 +39,7 @@ def run_scheduler(cfg: AppConfig) -> None:
             )
             return
         logger.info("开始一轮轮询")
-        stats = pipeline.run_once()
+        stats = run_all_users(cfg)
         logger.info("本轮完成：%s", stats)
 
     scheduler = BlockingScheduler(timezone="Asia/Shanghai")

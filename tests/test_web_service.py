@@ -3,6 +3,7 @@
 from ashare.db import Database
 from ashare.models import (
     Analysis,
+    AnalysisType,
     Opinion,
     Stage,
     Stance,
@@ -71,6 +72,34 @@ def test_dashboard_stats():
     assert data["stats"]["total"] == 1
     assert data["stats"]["success"] == 1
     assert data["stats"]["opinions"] == 1
+
+
+def test_dashboard_filters_videos_and_stats_by_user():
+    db = _seed()
+    db.upsert_video(Video("v2", "other", "其他用户", "u2", publish_time=200))
+
+    data = dashboard_data(db, author_sec_uid="sec")
+
+    assert [video["aweme_id"] for video in data["videos"]] == ["v1"]
+    assert data["stats"]["total"] == 1
+
+
+def test_general_video_detail_exposes_tags_content_and_prompt_snapshot():
+    db = Database(":memory:", clock=lambda: 1000)
+    db.upsert_video(Video("v1", "general", "新品", "u", publish_time=100))
+    db.save_analysis(Analysis(
+        "v1", "codex-cli", "输入", "输出",
+        analysis_type=AnalysisType.GENERAL, system_prompt="通用提示词快照",
+        summary="新品摘要", tags=["科技", "新品"], content="通用正文",
+    ))
+
+    detail = video_detail(db, "v1")
+
+    assert detail["analysis_type"] == "general"
+    assert detail["system_prompt"] == "通用提示词快照"
+    assert detail["tags"] == ["科技", "新品"]
+    assert detail["content"] == "通用正文"
+    assert detail["opinions"] == []
 
 
 def test_video_detail():

@@ -5,7 +5,7 @@ import logging
 import pytest
 
 from ashare.config import TelegramConfig
-from ashare.models import Analysis, Opinion, Stance, TargetType, Video
+from ashare.models import Analysis, AnalysisType, Opinion, Stance, TargetType, Video
 from ashare.notify.base import FakeNotifier, NoopNotifier, make_notifier
 from ashare.notify.telegram import TelegramNotifier, _httpx_poster, build_message, split_message
 from ashare.result import Err, Ok
@@ -20,6 +20,14 @@ def _analysis():
     return Analysis("v1", "m", "in", "out", summary="整体看多半导体", sectors=["半导体", "AI"],
                     opinions=[Opinion("中芯国际", TargetType.STOCK, Stance.BULLISH, "国产替代",
                                       target_code="688981")])
+
+
+def _general_analysis():
+    return Analysis(
+        "v1", "m", "in", "out", analysis_type=AnalysisType.GENERAL,
+        summary="介绍了一款新产品", tags=["科技", "新品"],
+        content="正文重点包括产品能力、发布时间和适用人群。",
+    )
 
 
 def test_build_message_contains_all_parts():
@@ -40,6 +48,15 @@ def test_build_message_html_escape():
     msg = build_message(v, "x", None)
     assert "A &amp; B &lt;test&gt;" in msg
     assert "未抽取到明确" in msg                 # 无 analysis 时的提示
+
+
+def test_build_message_renders_general_analysis_without_financial_placeholder():
+    msg = build_message(_video(), "产品发布原文", _general_analysis())
+
+    assert "介绍了一款新产品" in msg
+    assert "科技、新品" in msg
+    assert "正文重点包括产品能力" in msg
+    assert "未抽取到明确的行业/个股观点" not in msg
 
 
 def test_split_message_short_single():
@@ -203,6 +220,20 @@ def test_build_wecom_message_contains_analysis_and_transcript():
     assert "中芯国际（688981）" in msg
     assert "🔴 [看多]" in msg
     assert "我看好半导体国产替代" in msg
+
+
+def test_build_wecom_message_renders_general_analysis():
+    from ashare.notify.base import NotificationPayload
+    from ashare.notify.wecom import build_message as build_wecom_message
+
+    msg = build_wecom_message(NotificationPayload(
+        _video(), "产品发布原文", _general_analysis(),
+    ))
+
+    assert "介绍了一款新产品" in msg
+    assert "科技、新品" in msg
+    assert "正文重点包括产品能力" in msg
+    assert "未抽取到明确的行业/个股观点" not in msg
 
 
 def test_build_wecom_message_escapes_dynamic_markdown_and_html():

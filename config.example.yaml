@@ -1,11 +1,11 @@
-# 抖音金融观点抽取流水线 —— 配置模板
+# 抖音多用户内容分析流水线 —— 配置模板
 # 复制为 config.yaml 后填入真实值。config.yaml 已被 .gitignore 忽略。
 
 douyin:
   # 抖音网页版登录后的 Cookie（F12 -> Network -> 复制 Cookie 整串）。
   # 公开内容理论上可游客访问，但带登录 Cookie 能显著降低触发风控的概率。
   cookie: "PUT_YOUR_DOUYIN_COOKIE_HERE"
-  # 博主的 sec_uid。首次可用 `ashare resolve-author "创业魔法师"` 解析后回填。
+  # 仅用于首次启动迁移第一个用户；迁移后请在 Web 设置中管理多个用户。
   author_sec_uid: ""
   # 博主昵称（仅用于校验/展示；解析时用）。
   author_name: "创业魔法师"

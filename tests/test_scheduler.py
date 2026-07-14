@@ -39,10 +39,10 @@ def _cfg():
 
 
 def test_scheduler_skips_poll_during_beijing_quiet_hours(monkeypatch, caplog):
-    pipe = FakePipeline()
+    calls = []
     caplog.set_level(logging.INFO, logger="ashare.scheduler")
     monkeypatch.setattr(scheduler, "BlockingScheduler", FakeBlockingScheduler)
-    monkeypatch.setattr(scheduler, "build_pipeline", lambda cfg: pipe)
+    monkeypatch.setattr(scheduler, "run_all_users", lambda cfg: calls.append(cfg))
     monkeypatch.setattr(
         scheduler,
         "now_beijing",
@@ -52,14 +52,14 @@ def test_scheduler_skips_poll_during_beijing_quiet_hours(monkeypatch, caplog):
 
     scheduler.run_scheduler(_cfg())
 
-    assert pipe.calls == 0
+    assert calls == []
     assert "北京时间 01:00-08:00 暂停轮询" in caplog.text
 
 
 def test_scheduler_runs_poll_after_beijing_quiet_hours(monkeypatch):
-    pipe = FakePipeline()
+    calls = []
     monkeypatch.setattr(scheduler, "BlockingScheduler", FakeBlockingScheduler)
-    monkeypatch.setattr(scheduler, "build_pipeline", lambda cfg: pipe)
+    monkeypatch.setattr(scheduler, "run_all_users", lambda cfg: calls.append(cfg) or {"processed": 2})
     monkeypatch.setattr(
         scheduler,
         "now_beijing",
@@ -69,12 +69,12 @@ def test_scheduler_runs_poll_after_beijing_quiet_hours(monkeypatch):
 
     scheduler.run_scheduler(_cfg())
 
-    assert pipe.calls == 1
+    assert calls == [_cfg()]
 
 
 def test_scheduler_configures_wake_resume_policy(monkeypatch):
     monkeypatch.setattr(scheduler, "BlockingScheduler", FakeBlockingScheduler)
-    monkeypatch.setattr(scheduler, "build_pipeline", lambda cfg: FakePipeline())
+    monkeypatch.setattr(scheduler, "run_all_users", lambda cfg: {})
     monkeypatch.setattr(
         scheduler,
         "now_beijing",

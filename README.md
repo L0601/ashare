@@ -1,10 +1,10 @@
-# 抖音财经博主金融观点抽取流水线
+# 抖音多用户内容分析流水线
 
-跟踪指定抖音财经博主（如「创业魔法师」）的最新视频，自动完成：
+跟踪多个抖音博主的最新视频，并按用户选择「金融分析」或「通用分析」，自动完成：
 
 ```
 发现最新视频 → 下载无水印 mp4 → ffmpeg 抽音轨(16k 单声道)
-  → 本地 Qwen3-ASR-1.7B 转写 → Codex Agent 优先抽取观点（失败回退 LLM）
+  → 本地 Qwen3-ASR-1.7B 转写 → Codex Agent 优先分析（失败回退 LLM）
   → 推送 Telegram / 企业微信
 ```
 
@@ -17,13 +17,13 @@ SQLite，中间文件按视频分目录存放，并提供 **Web 后台**（看�
 | 模块 | 职责 |
 |------|------|
 | `src/ashare/config.py` | 配置加载（pydantic 校验 yaml）+ DB 运行时覆盖（`apply_overrides`），集中敏感/可变项 |
-| `src/ashare/db.py` | SQLite 持久化（videos / stage_runs / transcripts / analyses / opinions / poll_runs / settings） |
+| `src/ashare/db.py` | SQLite 持久化（tracked_users / videos / transcripts / analyses / opinions / settings 等） |
 | `src/ashare/douyin/` | 抓取层：F2 封装（`client.py`，含 sec_uid/profile 解析）+ 无水印下载（`downloader.py`），抽象接口 + Fake |
 | `src/ashare/media/audio.py` | ffmpeg 抽音轨（命令构造与执行分离） |
 | `src/ashare/asr/` | 语音转写：接口 + Qwen3-ASR（MLX/transformers）+ Fake |
 | `src/ashare/llm/` | 观点抽取：本机 Codex CLI Agent 优先 + 兼容 OpenAI LLM 兜底 + 防御性 JSON 解析 |
 | `src/ashare/notify/` | 推送层：中立通知载荷 + Telegram / 企业微信群机器人渲染与发送 + Fake/Noop |
-| `src/ashare/pipeline/` | 流水线状态机（`runner.py`，含 NOTIFY 阶段，幂等续跑）+ 定时调度（`scheduler.py`） |
+| `src/ashare/pipeline/` | 单用户流水线 + 多用户串行协调（共享一份 ASR）+ 定时调度 |
 | `src/ashare/web/` | Web 后台：FastAPI 接口（`app.py`）+ 数据装配（`service.py`）+ 后台单飞拉取（`pull.py`）+ 自包含单页（`templates/dashboard.html`） |
 | `src/ashare/cli.py` | 命令行入口（运行 / 调度 / 诊断 / 重置） |
 
@@ -51,7 +51,7 @@ cp config.example.yaml config.yaml   # config.yaml 已被 .gitignore 忽略
 
 填写关键项：
 - `douyin.cookie`：抖音网页版登录后的 Cookie（公开内容理论可游客访问，但带登录 Cookie 显著降低触发风控概率）
-- `douyin.author_sec_uid`：博主 sec_uid，可用下方 `resolve-author` 解析后回填
+- `douyin.author_sec_uid` / `author_name`：仅用于首次启动迁移第一个用户；之后在 Web「设置」中管理用户
 - `llm.base_url` / `llm.api_key` / `llm.model`：兼容 OpenAI 的服务（如 DeepSeek）
 - `asr.engine`：`mlx` / `transformers` / `fake`（开发期可用 `fake` 跑通链路）
 - `asr.model`：模型名或本地路径（如 `mlx-community/Qwen3-ASR-1.7B-8bit`，或已下载到本地的目录）
@@ -67,9 +67,11 @@ cp config.example.yaml config.yaml   # config.yaml 已被 .gitignore 忽略
 `llm.*` 服务。这里的“本机 Codex”指在本机启动 Agent，推理仍使用该目录登录的 ChatGPT 云端账号，
 不是离线模型。
 
-**运行时配置（Web 后台可改，存数据库覆盖文件）**：`cookie`、`author_sec_uid`、`latest_count`、
+**运行时配置（Web 后台可改，存数据库覆盖文件）**：`cookie`、`latest_count`、
 `poll_interval_minutes`、`telegram_enabled` / `telegram_bot_token` / `telegram_chat_id`、`wecom_enabled`
-这几项常改的配置可在看板「设置」抽屉里修改，保存即生效，
+这几项常改的全局配置可在看板「设置」抽屉里修改，保存即生效。
+监控用户单独存于 `tracked_users` 表，每个用户绑定内容类型、系统提示词和启用状态；内置金融/通用两套默认提示词。
+切换内容类型不会覆盖已有自定义提示词，只有点击“恢复当前类型默认提示词”才会替换。
 存于 SQLite `settings` 表并覆盖文件默认值（"清空所有数据"不会清掉它们）。UA、LLM 密钥/端点、
 ASR 模型路径、企业微信 webhook 等固化/敏感项不进后台，仍改 `config.yaml`；修改文件配置后需重启进程。
 
@@ -92,16 +94,17 @@ ashare schedule
 **诊断命令**（首次部署逐段验证，详见 `COMMANDS.md`）：
 
 ```bash
-ashare check-llm                       # 验 Codex 优先 + LLM 回退（内置样例，不联网抖音）
-ashare list-videos --count 5           # 验抓取：打印最新视频列表（只读不下载）
+ashare check-llm [--user-id ID]        # 按指定/第一个用户验证 Codex 优先 + LLM 回退
+ashare list-videos --count 5 [--user-id ID]  # 按指定/第一个用户验证抓取
 ashare download-one "<视频链接>" --audio  # 验解析+下载+抽音轨（不跑 ASR/LLM）
 ashare check-asr data/videos/<YYYY-MM-DD>_<id>/audio.wav   # 验 Qwen3-ASR 转写
-ashare reset-db [--files]              # 重置：清空数据（--files 连带删中间文件，保留配置）
+ashare reset-db [--files]              # 清空视频分析数据，保留用户与配置
 ```
 
-**Web 后台功能**（`ashare serve` 后访问）：看板每 2s 自动刷新、阶段徽章/观点表/转写/AI 留痕详情抽屉；
-「拉取最新」单飞后台拉取并处理最新 N 条；「自动拉取」开关（前端定时驱动，关页即停）；
-「设置」抽屉改运行时配置（sec_uid 可粘主页链接联网校验账号）；单条删除 / 清空所有数据（确认弹窗）。
+**Web 后台功能**（`ashare serve` 后访问）：顶部用户下拉只过滤该用户的视频和统计，默认第一个用户；
+「拉取最新」、浏览器自动拉取、CLI 和定时任务都会按数据库顺序串行处理全部启用用户；
+设置抽屉可新增、编辑、停用用户并配置其内容类型和系统提示词（sec_uid 创建后不可修改、不提供删除）；
+详情按金融/通用结构展示，并保留分析时的类型和提示词快照。清空视频数据不会删除用户及其提示词。
 
 > 用户给的「搜索结果页」链接不稳定，推荐用博主主页链接（含 `/user/<sec_uid>`）解析出
 > sec_uid 后，走更稳定的博主主页发布接口。
@@ -116,8 +119,8 @@ ashare reset-db [--files]              # 重置：清空数据（--files 连带�
 
 ## 多渠道推送
 
-视频**完整处理完成**（转写 + 抽取）后，NOTIFY 阶段把结果推送到全部启用渠道。消息含**作者、原视频链接、
-发布时间、整体摘要、板块、逐条观点、口播全文**；Telegram 使用 HTML，企业微信使用 Markdown，超长内容
+视频**完整处理完成**（转写 + 分析）后，NOTIFY 阶段把结果推送到全部启用渠道。金融消息含板块和逐条观点；
+通用消息含摘要、标签、正文和口播全文。Telegram 使用 HTML，企业微信使用 Markdown，超长内容
 按各渠道限制自动拆条。企业微信按 UTF-8 字节拆分并限制请求速率，避免超过单 webhook 20 条/分钟。
 
 - 配置 `telegram.enabled/bot_token/chat_id`（或在 Web 后台「设置」里填）即生效。

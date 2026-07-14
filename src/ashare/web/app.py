@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 import shutil
 from pathlib import Path
 from typing import Callable
@@ -23,7 +24,10 @@ from ..config import (
 )
 from ..db import Database
 from ..douyin.base import DouyinClient
+from ..llm.prompts import FINANCIAL_SYSTEM_PROMPT, GENERAL_SYSTEM_PROMPT, default_system_prompt
+from ..models import AnalysisType, TrackedUser
 from ..storage import video_dir
+from ..users import ensure_initial_tracked_user
 from .pull import PullManager
 from .service import dashboard_data, video_detail
 
@@ -36,13 +40,20 @@ def _default_client_factory(cfg: AppConfig) -> DouyinClient:
     return F2DouyinClient(cfg)
 
 
+def _default_all_users_runner(cfg: AppConfig, *, limit: int) -> dict:
+    from ..pipeline.multi_user import run_all_users
+
+    return run_all_users(cfg, limit=limit)
+
+
 def create_app(
     cfg: AppConfig | None = None,
     pull_manager: PullManager | None = None,
     client_factory: Callable[[AppConfig], DouyinClient] = _default_client_factory,
+    all_users_runner: Callable[..., dict] = _default_all_users_runner,
 ) -> FastAPI:
     file_cfg = cfg or load_config()
-    app = FastAPI(title="抖音金融观点看板", docs_url=None, redoc_url=None)
+    app = FastAPI(title="抖音多用户内容分析看板", docs_url=None, redoc_url=None)
 
     def open_db() -> Database:
         return Database(file_cfg.db_path)
@@ -55,12 +66,15 @@ def create_app(
         finally:
             db.close()
 
-    def run_pull() -> dict:
-        from ..pipeline.runner import build_pipeline
+    bootstrap_db = open_db()
+    try:
+        ensure_initial_tracked_user(bootstrap_db, file_cfg)
+    finally:
+        bootstrap_db.close()
 
+    def run_pull() -> dict:
         eff = effective()
-        # 合并后："最近 N 条"既是抓取数也是处理数
-        return build_pipeline(eff).run_once(limit=eff.douyin.latest_count)
+        return all_users_runner(eff, limit=eff.douyin.latest_count)
 
     pull = pull_manager or PullManager(run_pull)
 
@@ -71,10 +85,14 @@ def create_app(
 
     # ---------- 看板数据 ----------
     @app.get("/api/videos")
-    def api_videos():
+    def api_videos(user_id: int | None = None):
         db = open_db()
         try:
-            data = dashboard_data(db)
+            user = _selected_user(db, user_id)
+            if user_id is not None and user is None:
+                return JSONResponse({"error": "用户不存在"}, status_code=404)
+            data = dashboard_data(db, user.sec_uid if user else "")
+            data["selected_user_id"] = user.id if user else None
             data["pull"] = pull.status()
             s = db.get_settings()
             eff = apply_overrides(file_cfg, s)
@@ -107,10 +125,61 @@ def create_app(
     # ---------- 拉取 ----------
     @app.post("/api/pull")
     def api_pull():
+        db = open_db()
+        try:
+            if not db.list_tracked_users(enabled_only=True):
+                return JSONResponse({"error": "没有启用的用户"}, status_code=400)
+        finally:
+            db.close()
         started = pull.trigger()
         return {"started": started, "pull": pull.status()}
 
     # ---------- 设置 ----------
+    @app.get("/api/users")
+    def api_get_users():
+        db = open_db()
+        try:
+            users = db.list_tracked_users()
+        finally:
+            db.close()
+        return {
+            "users": [_user_dict(user) for user in users],
+            "default_user_id": users[0].id if users else None,
+            "default_prompts": {
+                "financial": FINANCIAL_SYSTEM_PROMPT,
+                "general": GENERAL_SYSTEM_PROMPT,
+            },
+        }
+
+    @app.post("/api/users")
+    def api_create_user(payload: dict = Body(...)):
+        values, error = _validate_user_payload(payload, creating=True)
+        if error:
+            return JSONResponse({"error": error}, status_code=400)
+        db = open_db()
+        try:
+            user = db.create_tracked_user(**values)
+        except sqlite3.IntegrityError:
+            return JSONResponse({"error": "该 sec_uid 已存在"}, status_code=409)
+        finally:
+            db.close()
+        return {"user": _user_dict(user)}
+
+    @app.put("/api/users/{user_id}")
+    def api_update_user(user_id: int, payload: dict = Body(...)):
+        db = open_db()
+        try:
+            current = db.get_tracked_user(user_id)
+            if current is None:
+                return JSONResponse({"error": "用户不存在"}, status_code=404)
+            values, error = _validate_user_payload(payload, current=current)
+            if error:
+                return JSONResponse({"error": error}, status_code=400)
+            user = db.update_tracked_user(user_id, **values)
+            return {"user": _user_dict(user)}
+        finally:
+            db.close()
+
     @app.get("/api/settings")
     def api_get_settings():
         vals = editable_values(effective())
@@ -131,6 +200,7 @@ def create_app(
             db.close()
         return {"ok": True, "values": editable_values(effective())}
 
+    @app.post("/api/users/validate-secuid")
     @app.post("/api/settings/validate-secuid")
     def api_validate_secuid(payload: dict = Body(...)):
         client = client_factory(effective())
@@ -173,6 +243,54 @@ def create_app(
     return app
 
 
+def _selected_user(db: Database, user_id: int | None) -> TrackedUser | None:
+    if user_id is not None:
+        return db.get_tracked_user(user_id)
+    users = db.list_tracked_users()
+    return users[0] if users else None
+
+
+def _user_dict(user: TrackedUser) -> dict:
+    return {
+        "id": user.id, "sec_uid": user.sec_uid, "name": user.name,
+        "analysis_type": user.analysis_type.value,
+        "system_prompt": user.system_prompt, "enabled": user.enabled,
+    }
+
+
+def _validate_user_payload(
+    payload: dict, *, creating: bool = False, current: TrackedUser | None = None,
+) -> tuple[dict, str]:
+    sec_uid = str(payload.get("sec_uid", "")).strip() if creating else ""
+    if creating and not sec_uid.startswith("MS4w"):
+        return {}, "sec_uid 应以 MS4w 开头"
+    name = str(payload.get("name", current.name if current else "")).strip()
+    if not name:
+        return {}, "用户昵称不能为空"
+    try:
+        kind = AnalysisType(payload.get(
+            "analysis_type", current.analysis_type if current else "financial",
+        ))
+    except ValueError:
+        return {}, "分析类型必须是 financial 或 general"
+    default = default_system_prompt(kind)
+    prompt = str(payload.get(
+        "system_prompt", current.system_prompt if current else default,
+    )).strip()
+    if not prompt:
+        return {}, "系统提示词不能为空"
+    enabled = payload.get("enabled", current.enabled if current else True)
+    if not isinstance(enabled, bool):
+        return {}, "enabled 必须是布尔值"
+    values = {
+        "name": name, "analysis_type": kind, "system_prompt": prompt,
+        "enabled": enabled,
+    }
+    if creating:
+        values["sec_uid"] = sec_uid
+    return values, ""
+
+
 def _validate_settings(payload: dict) -> tuple[bool, str]:
     """校验后台提交的配置:整数项必须为正整数;sec_uid 若填须 MS4w 开头。"""
     for spec in EDITABLE_SETTINGS:
@@ -185,6 +303,4 @@ def _validate_settings(payload: dict) -> tuple[bool, str]:
                     return False, f"{spec['label']} 必须是正整数"
             except (TypeError, ValueError):
                 return False, f"{spec['label']} 必须是整数"
-        if spec["key"] == "author_sec_uid" and val and not str(val).startswith("MS4w"):
-            return False, "sec_uid 应以 MS4w 开头（可用校验按钮从主页链接解析）"
     return True, ""

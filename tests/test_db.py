@@ -8,6 +8,7 @@ import pytest
 from ashare.db import Database
 from ashare.models import (
     Analysis,
+    AnalysisType,
     Opinion,
     Stage,
     Stance,
@@ -48,6 +49,15 @@ def test_list_videos_sorted_by_publish_time_desc(db):
     db.upsert_video(Video("b", "s", "B", "u", publish_time=200))
     ids = [v.aweme_id for v in db.list_videos()]
     assert ids == ["b", "a"]
+
+
+def test_list_videos_can_filter_by_author(db):
+    db.upsert_video(Video("a", "user-a", "A", "u", publish_time=100))
+    db.upsert_video(Video("b", "user-b", "B", "u", publish_time=200))
+
+    videos = db.list_videos(author_sec_uid="user-a")
+
+    assert [video.aweme_id for video in videos] == ["a"]
 
 
 def test_known_aweme_ids(db):
@@ -129,6 +139,23 @@ def test_save_analysis_with_opinions(db):
     assert got.opinions[1].target_type == TargetType.INDUSTRY
 
 
+def test_save_general_analysis_keeps_prompt_snapshot_and_content(db):
+    analysis = Analysis(
+        aweme_id="v1", llm_model="codex-cli", prompt_input="口播文字",
+        raw_output='{"title":"新品发布"}', analysis_type=AnalysisType.GENERAL,
+        system_prompt="实际使用的通用提示词", summary="发布了新产品",
+        tags=["科技", "新品"], content="产品特点与发布时间。",
+    )
+
+    db.save_analysis(analysis)
+
+    got = db.get_analysis("v1")
+    assert got.analysis_type == AnalysisType.GENERAL
+    assert got.system_prompt == "实际使用的通用提示词"
+    assert got.tags == ["科技", "新品"]
+    assert got.content == "产品特点与发布时间。"
+
+
 def test_save_analysis_is_idempotent_on_opinions(db):
     """重复保存同一视频的分析，观点应被替换而非累加。"""
     base = Analysis("v1", "m", "in", "out",
@@ -181,6 +208,33 @@ def test_migrate_adds_author_name_to_old_db(tmp_path):
     cols = {r["name"] for r in database.conn.execute("PRAGMA table_info(videos)")}
     assert "author_name" in cols
     assert database.get_video("v1") is not None   # 老数据可正常读
+    database.close()
+
+
+def test_migrate_backfills_existing_analysis_prompt_snapshot(tmp_path):
+    import sqlite3
+
+    from ashare.llm.prompts import SYSTEM_PROMPT
+
+    path = tmp_path / "old-analysis.db"
+    con = sqlite3.connect(path)
+    con.execute("""CREATE TABLE analyses (
+        aweme_id TEXT PRIMARY KEY, llm_model TEXT NOT NULL,
+        prompt_input TEXT NOT NULL, raw_output TEXT NOT NULL,
+        summary TEXT DEFAULT '', sectors TEXT DEFAULT '[]', created_at INTEGER NOT NULL
+    )""")
+    con.execute(
+        "INSERT INTO analyses VALUES (?,?,?,?,?,?,?)",
+        ("v1", "m", "输入", "输出", "摘要", "[]", 100),
+    )
+    con.commit()
+    con.close()
+
+    database = Database(path, clock=lambda: 1000)
+
+    analysis = database.get_analysis("v1")
+    assert analysis.analysis_type == AnalysisType.FINANCIAL
+    assert analysis.system_prompt == SYSTEM_PROMPT
     database.close()
 
 
@@ -239,6 +293,43 @@ def test_reset_keeps_settings(db):
     db.reset()
     assert db.list_videos() == []
     assert db.get_settings() == {"cookie": "ck"}   # 配置保留
+
+
+def test_tracked_users_are_listed_in_creation_order(db):
+    first = db.create_tracked_user(
+        sec_uid="MS4w_first", name="财经博主",
+        analysis_type="financial", system_prompt="金融提示词",
+    )
+    second = db.create_tracked_user(
+        sec_uid="MS4w_second", name="科技博主",
+        analysis_type="general", system_prompt="通用提示词",
+    )
+
+    users = db.list_tracked_users()
+
+    assert [user.id for user in users] == [first.id, second.id]
+    assert users[0].analysis_type.value == "financial"
+    assert users[1].system_prompt == "通用提示词"
+
+
+def test_tracked_user_can_change_strategy_and_be_disabled(db):
+    user = db.create_tracked_user(
+        sec_uid="MS4w_user", name="旧昵称",
+        analysis_type="financial", system_prompt="旧提示词",
+    )
+
+    db.update_tracked_user(
+        user.id, name="新昵称", analysis_type="general",
+        system_prompt="新提示词", enabled=False,
+    )
+
+    updated = db.get_tracked_user(user.id)
+    assert updated.sec_uid == "MS4w_user"
+    assert updated.name == "新昵称"
+    assert updated.analysis_type.value == "general"
+    assert updated.system_prompt == "新提示词"
+    assert updated.enabled is False
+    assert db.list_tracked_users(enabled_only=True) == []
 
 
 def test_reset_clears_all_data(db):

@@ -60,7 +60,7 @@ def test_apply_overrides_maps_db_values(tmp_path):
         "wecom_enabled": "1",
     })
     assert eff.douyin.cookie == "new_ck"
-    assert eff.douyin.author_sec_uid == "MS4w_new"
+    assert eff.douyin.author_sec_uid == "sec123"  # 用户改由 tracked_users 管理
     assert eff.douyin.latest_count == 20          # 字符串转 int
     assert eff.schedule.poll_interval_minutes == 120
     assert eff.telegram.enabled is True           # "1" → bool True
@@ -87,8 +87,7 @@ def test_apply_overrides_skips_empty_and_invalid(tmp_path):
 def test_editable_values_reads_effective(tmp_path):
     cfg = _base_cfg(tmp_path)
     vals = editable_values(cfg)
-    assert vals["author_sec_uid"] == "sec123"
     assert vals["latest_count"] == 10
-    assert set(vals) == {"cookie", "author_sec_uid", "latest_count", "poll_interval_minutes",
+    assert set(vals) == {"cookie", "latest_count", "poll_interval_minutes",
                          "telegram_enabled", "telegram_bot_token", "telegram_chat_id",
                          "wecom_enabled"}

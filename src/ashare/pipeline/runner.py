@@ -26,6 +26,11 @@ from ..result import Err, Ok, Result
 from ..storage import video_dir
 
 
+def _processing_order(video: Video) -> tuple[bool, int, str]:
+    """已知发布时间从早到晚；时间缺失的视频放在本批末尾。"""
+    return video.publish_time <= 0, video.publish_time, video.aweme_id
+
+
 class Pipeline:
     def __init__(
         self,
@@ -41,6 +46,7 @@ class Pipeline:
         extract_audio_fn: Callable = extract_audio,
         probe_fn: Callable = probe_duration,
         pace: Callable[[], None] | None = None,
+        owns_transcriber: bool = True,
     ):
         self.cfg = cfg
         self.db = db
@@ -54,6 +60,7 @@ class Pipeline:
         self._extract_audio_fn = extract_audio_fn
         self._probe_fn = probe_fn
         self._pace = pace or _make_pacer(cfg)
+        self._owns_transcriber = owns_transcriber
 
     # ---------- 对外入口 ----------
     def discover(self) -> Result[list[Video], str]:
@@ -74,7 +81,8 @@ class Pipeline:
         try:
             return self._run_once(limit)
         finally:
-            self.transcriber.release()
+            if self._owns_transcriber:
+                self.transcriber.release()
 
     def _run_once(self, limit: int | None = None) -> dict:
         """执行一轮业务处理，资源生命周期由 run_once 统一管理。"""
@@ -86,6 +94,7 @@ class Pipeline:
         pending = self._pending_videos()
         if limit is not None:
             pending = pending[:limit]
+        pending.sort(key=_processing_order)
         processed = sum(self.process_video(v) for v in pending)
         self.db.finish_poll(poll_id, len(discovered.value), "success")
         return {"new": len(discovered.value), "processed": processed}
@@ -122,7 +131,10 @@ class Pipeline:
 
     def _pending_videos(self) -> list[Video]:
         """挑出尚未成功的视频（含失败的，便于重试续跑）。"""
-        return [v for v in self.db.list_videos() if v.overall_status != Status.SUCCESS]
+        videos = self.db.list_videos(
+            author_sec_uid=self.cfg.douyin.author_sec_uid,
+        )
+        return [video for video in videos if video.overall_status != Status.SUCCESS]
 
     # ---------- 各阶段副作用 ----------
     def _download(self, video: Video) -> Result[Path, str]:
@@ -231,16 +243,34 @@ def _make_pacer(cfg: AppConfig) -> Callable[[], None]:
     return pace
 
 
-def build_pipeline(cfg: AppConfig, db: Database | None = None) -> Pipeline:
+def build_pipeline(
+    cfg: AppConfig, db: Database | None = None, *,
+    transcriber: Transcriber | None = None,
+    analysis_type=None,
+    system_prompt: str | None = None,
+) -> Pipeline:
     """按配置装配真实流水线（生产用）。"""
     from ..douyin.client import F2DouyinClient
 
+    from ..models import AnalysisType
+
     database = db or Database(cfg.db_path)
+    owns_transcriber = transcriber is None
+    actual_transcriber = transcriber or make_transcriber(cfg.asr)
+    kind = AnalysisType(analysis_type or AnalysisType.FINANCIAL)
+    extractor = (
+        make_extractor(cfg.llm)
+        if kind == AnalysisType.FINANCIAL and system_prompt is None
+        else make_extractor(
+            cfg.llm, analysis_type=kind, system_prompt=system_prompt,
+        )
+    )
     return Pipeline(
         cfg=cfg,
         db=database,
         client=F2DouyinClient(cfg),
-        transcriber=make_transcriber(cfg.asr),
-        extractor=make_extractor(cfg.llm),
+        transcriber=actual_transcriber,
+        extractor=extractor,
         notifiers=make_notifiers(cfg),
+        owns_transcriber=owns_transcriber,
     )

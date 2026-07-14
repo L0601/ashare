@@ -39,7 +39,7 @@ cp config.example.yaml config.yaml
 
 # 然后编辑 config.yaml，填写：
 #   douyin.cookie          抖音网页版登录后的 Cookie
-#   douyin.author_sec_uid  博主 sec_uid（可用下面 resolve-author 解析后回填）
+#   douyin.author_sec_uid  仅用于首次迁移第一个用户，之后在 Web 设置中管理
 #   llm.base_url/api_key/model  兼容 OpenAI 的 LLM 服务（如 DeepSeek）
 #   asr.engine             正式跑改为 mlx；开发期可用 fake 跑通链路
 #   telegram.enabled/bot_token/chat_id  处理完成后推送 Telegram（也可在 Web 后台设置）
@@ -53,16 +53,17 @@ source .venv/bin/activate     # 每个新终端先激活
 # 解析博主 sec_uid（传主页/分享链接，含 /user/<sec_uid>，或直接传 sec_uid）
 ashare resolve-author "https://www.douyin.com/user/MS4wLjAB..."
 
-# 立即跑一轮：发现新视频 + 处理所有未完成视频
+# 立即跑一轮：按数据库顺序串行处理全部启用用户，共享一份 ASR 模型
 ashare run-once
 
 # 启动 Web 后台（默认 http://127.0.0.1:8000，仅本机）
 #   - 列表每 2 秒自动刷新（仅读本地库，不碰抖音，无风控风险）
 #   - 顶栏「拉取最新」按钮：后台异步执行 run_once(limit=最近N条)，单飞防重复
 #   - 顶栏「设置」按钮：右侧抽屉，可改运行时配置（存数据库，保存即生效）：
-#       cookie / author_sec_uid / 最近N条(latest_count) / poll_interval_minutes
+#       全局：cookie / 最近N条(latest_count) / poll_interval_minutes
+#       用户：sec_uid / 昵称 / 金融或通用类型 / 独立系统提示词 / 启用状态
 #       telegram_enabled(开关) / telegram_bot_token / telegram_chat_id
-#       sec_uid 支持粘主页链接，点「校验」会真连抖音确认账号（昵称+作品数）
+#       新增用户时 sec_uid 支持粘主页链接校验；创建后不可修改，可停用、不删除
 #       UA、LLM 密钥/端点、ASR 模型等固化项不在后台，改 config.yaml
 #   - 列表/详情显示作者名；视频处理完成后自动推送 Telegram（NOTIFY 阶段，幂等不重复）
 #   - 每行「删除」按钮：删该视频全部记录+中间文件（居中确认弹窗）
@@ -86,11 +87,11 @@ ashare schedule
 source .venv/bin/activate
 
 # 步骤1：验证观点分析（优先 ~/clean-codex，失败回退 llm.*；不联网抖音、不跑 ASR）
-ashare check-llm
+ashare check-llm [--user-id ID]
 
 # 步骤2：验证抖音抓取（需 douyin.cookie + author_sec_uid；只读列表，不下载）
 ashare resolve-author "https://www.douyin.com/user/MS4wLjAB..."   # 拿到 sec_uid 回填 config.yaml
-ashare list-videos --count 5
+ashare list-videos --count 5 [--user-id ID]
 
 # 步骤2.5：验证单视频"解析+下载"（只需 douyin.cookie + 一个视频链接，不跑 ASR/LLM）
 ashare download-one "https://www.douyin.com/video/74123..."          # 仅下载 mp4
@@ -108,8 +109,8 @@ ashare run-once
 ## 3.6 重置数据
 
 ```bash
-ashare reset-db            # 重建所有表，清空全部数据库数据
-ashare reset-db --files    # 同时删除 data/videos 下已下载的视频/音频等中间文件
+ashare reset-db            # 清空视频分析数据，保留用户、提示词和全局设置
+ashare reset-db --files    # 另删 data/videos 下已下载的视频/音频等中间文件
 ```
 
 ## 4. 测试

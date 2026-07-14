@@ -14,7 +14,7 @@ _BJ_TZ = timezone(timedelta(hours=8))
 # 阶段中文名，供看板展示
 STAGE_LABELS = {
     "discover": "发现", "download": "下载", "extract_audio": "抽音轨",
-    "transcribe": "转写", "extract": "抽取观点", "notify": "推送",
+    "transcribe": "转写", "extract": "AI 分析", "notify": "推送",
 }
 _ALL_STAGES = ["discover", "download", "extract_audio", "transcribe", "extract", "notify"]
 
@@ -74,12 +74,18 @@ def video_summary(db: Database, aweme_id: str) -> dict:
         "stages": _stage_list(stages),
         "opinion_count": len(analysis.opinions) if analysis else 0,
         "sectors": analysis.sectors if analysis else [],
+        "analysis_type": analysis.analysis_type.value if analysis else "",
+        "tags": analysis.tags if analysis else [],
+        "has_content": bool(analysis and analysis.content),
     }
 
 
-def dashboard_data(db: Database) -> dict:
+def dashboard_data(db: Database, author_sec_uid: str | None = None) -> dict:
     """列表页数据：所有视频摘要 + 总体统计。"""
-    videos = [video_summary(db, v.aweme_id) for v in db.list_videos()]
+    videos = [
+        video_summary(db, video.aweme_id)
+        for video in db.list_videos(author_sec_uid=author_sec_uid)
+    ]
     stats = _aggregate_stats(videos)
     return {"videos": videos, "stats": stats}
 
@@ -88,10 +94,15 @@ def _aggregate_stats(videos: list[dict]) -> dict:
     """汇总各状态视频数量与观点总数（纯统计）。"""
     counts = {"success": 0, "running": 0, "failed": 0, "pending": 0}
     opinions = 0
+    analysis_items = 0
     for v in videos:
         counts[v["overall_status"]] = counts.get(v["overall_status"], 0) + 1
         opinions += v["opinion_count"]
-    return {"total": len(videos), "opinions": opinions, **counts}
+        analysis_items += v["opinion_count"] or int(v["has_content"])
+    return {
+        "total": len(videos), "opinions": opinions,
+        "analysis_items": analysis_items, **counts,
+    }
 
 
 def video_detail(db: Database, aweme_id: str) -> dict | None:
@@ -108,8 +119,12 @@ def video_detail(db: Database, aweme_id: str) -> dict | None:
         "summary": analysis.summary if analysis else "",
         "analysis_time": fmt_time(analysis.created_at) if analysis else "-",
         "llm_model": analysis.llm_model if analysis else "",
+        "analysis_type": analysis.analysis_type.value if analysis else "",
+        "system_prompt": analysis.system_prompt if analysis else "",
         "prompt_input": analysis.prompt_input if analysis else "",
         "raw_output": analysis.raw_output if analysis else "",
+        "tags": analysis.tags if analysis else [],
+        "content": analysis.content if analysis else "",
         "opinions": [_opinion_dict(o) for o in (analysis.opinions if analysis else [])],
     })
     return base

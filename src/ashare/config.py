@@ -89,8 +89,6 @@ class AppConfig(BaseModel):
 EDITABLE_SETTINGS = [
     {"key": "cookie", "section": "douyin", "field": "cookie", "type": "str",
      "label": "抖音 Cookie", "secret": True},
-    {"key": "author_sec_uid", "section": "douyin", "field": "author_sec_uid", "type": "str",
-     "label": "博主 sec_uid"},
     {"key": "latest_count", "section": "douyin", "field": "latest_count", "type": "int",
      "label": "最近 N 条（抓取并处理）"},
     {"key": "poll_interval_minutes", "section": "schedule", "field": "poll_interval_minutes",

@@ -16,11 +16,13 @@ from typing import Callable, Optional
 
 from .models import (
     Analysis,
+    AnalysisType,
     Opinion,
     Stage,
     Stance,
     Status,
     TargetType,
+    TrackedUser,
     Transcript,
     Video,
 )
@@ -73,6 +75,10 @@ CREATE TABLE IF NOT EXISTS analyses (
     llm_model TEXT NOT NULL,
     prompt_input TEXT NOT NULL,
     raw_output TEXT NOT NULL,
+    analysis_type TEXT NOT NULL DEFAULT 'financial',
+    system_prompt TEXT NOT NULL DEFAULT '',
+    tags TEXT NOT NULL DEFAULT '[]',
+    content TEXT NOT NULL DEFAULT '',
     summary TEXT DEFAULT '',
     sectors TEXT DEFAULT '[]',
     created_at INTEGER NOT NULL
@@ -101,6 +107,18 @@ CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS tracked_users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    sec_uid TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    analysis_type TEXT NOT NULL,
+    system_prompt TEXT NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_videos_author_publish
+ON videos(author_sec_uid, publish_time DESC);
 """
 
 
@@ -127,6 +145,29 @@ class Database:
         cols = {r["name"] for r in self.conn.execute("PRAGMA table_info(videos)")}
         if "author_name" not in cols:
             self.conn.execute("ALTER TABLE videos ADD COLUMN author_name TEXT DEFAULT ''")
+        self._migrate_analysis_columns()
+
+    def _migrate_analysis_columns(self) -> None:
+        from .llm.prompts import SYSTEM_PROMPT
+
+        columns = {
+            row["name"] for row in self.conn.execute("PRAGMA table_info(analyses)")
+        }
+        additions = {
+            "analysis_type": "TEXT NOT NULL DEFAULT 'financial'",
+            "system_prompt": "TEXT NOT NULL DEFAULT ''",
+            "tags": "TEXT NOT NULL DEFAULT '[]'",
+            "content": "TEXT NOT NULL DEFAULT ''",
+        }
+        for name, definition in additions.items():
+            if name not in columns:
+                self.conn.execute(
+                    f"ALTER TABLE analyses ADD COLUMN {name} {definition}"
+                )
+        self.conn.execute(
+            "UPDATE analyses SET system_prompt=? WHERE system_prompt=''",
+            (SYSTEM_PROMPT,),
+        )
 
     def close(self) -> None:
         self.conn.close()
@@ -186,10 +227,17 @@ class Database:
         ).fetchone()
         return _row_to_video(row) if row else None
 
-    def list_videos(self) -> list[Video]:
-        rows = self.conn.execute(
-            "SELECT * FROM videos ORDER BY publish_time DESC"
-        ).fetchall()
+    def list_videos(self, author_sec_uid: str | None = None) -> list[Video]:
+        if author_sec_uid is None:
+            rows = self.conn.execute(
+                "SELECT * FROM videos ORDER BY publish_time DESC"
+            ).fetchall()
+        else:
+            rows = self.conn.execute(
+                """SELECT * FROM videos WHERE author_sec_uid=?
+                   ORDER BY publish_time DESC""",
+                (author_sec_uid,),
+            ).fetchall()
         return [_row_to_video(r) for r in rows]
 
     def known_aweme_ids(self) -> set[str]:
@@ -297,13 +345,17 @@ class Database:
         now = self._clock()
         self.conn.execute(
             """INSERT INTO analyses (aweme_id, llm_model, prompt_input, raw_output,
-                   summary, sectors, created_at)
-               VALUES (?,?,?,?,?,?,?)
+                   analysis_type, system_prompt, tags, content, summary, sectors, created_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?)
                ON CONFLICT(aweme_id) DO UPDATE SET
                    llm_model=excluded.llm_model, prompt_input=excluded.prompt_input,
-                   raw_output=excluded.raw_output, summary=excluded.summary,
+                   raw_output=excluded.raw_output, analysis_type=excluded.analysis_type,
+                   system_prompt=excluded.system_prompt, tags=excluded.tags,
+                   content=excluded.content, summary=excluded.summary,
                    sectors=excluded.sectors, created_at=excluded.created_at""",
-            (a.aweme_id, a.llm_model, a.prompt_input, a.raw_output, a.summary,
+            (a.aweme_id, a.llm_model, a.prompt_input, a.raw_output,
+             a.analysis_type.value, a.system_prompt,
+             json.dumps(a.tags, ensure_ascii=False), a.content, a.summary,
              json.dumps(a.sectors, ensure_ascii=False), now),
         )
         self.conn.execute("DELETE FROM opinions WHERE aweme_id=?", (a.aweme_id,))
@@ -326,6 +378,9 @@ class Database:
         return Analysis(
             aweme_id=row["aweme_id"], llm_model=row["llm_model"],
             prompt_input=row["prompt_input"], raw_output=row["raw_output"],
+            analysis_type=AnalysisType(row["analysis_type"]),
+            system_prompt=row["system_prompt"],
+            tags=json.loads(row["tags"] or "[]"), content=row["content"],
             summary=row["summary"], sectors=json.loads(row["sectors"] or "[]"),
             opinions=self.get_opinions(aweme_id), created_at=row["created_at"],
         )
@@ -377,6 +432,61 @@ class Database:
             )
         self.conn.commit()
 
+    def delete_setting(self, key: str) -> None:
+        self.conn.execute("DELETE FROM settings WHERE key=?", (key,))
+        self.conn.commit()
+
+    # ---------- tracked_users（监控配置，不随 reset 清除）----------
+    def create_tracked_user(
+        self, *, sec_uid: str, name: str, analysis_type: AnalysisType | str,
+        system_prompt: str, enabled: bool = True,
+    ) -> TrackedUser:
+        now = self._clock()
+        kind = AnalysisType(analysis_type)
+        cur = self.conn.execute(
+            """INSERT INTO tracked_users
+                   (sec_uid, name, analysis_type, system_prompt, enabled, created_at, updated_at)
+               VALUES (?,?,?,?,?,?,?)""",
+            (sec_uid, name, kind.value, system_prompt, int(enabled), now, now),
+        )
+        self.conn.commit()
+        return self.get_tracked_user(cur.lastrowid)
+
+    def get_tracked_user(self, user_id: int) -> Optional[TrackedUser]:
+        row = self.conn.execute(
+            "SELECT * FROM tracked_users WHERE id=?", (user_id,),
+        ).fetchone()
+        return _row_to_tracked_user(row) if row else None
+
+    def list_tracked_users(self, *, enabled_only: bool = False) -> list[TrackedUser]:
+        where = "WHERE enabled=1" if enabled_only else ""
+        rows = self.conn.execute(
+            f"SELECT * FROM tracked_users {where} ORDER BY id ASC"
+        ).fetchall()
+        return [_row_to_tracked_user(row) for row in rows]
+
+    def update_tracked_user(
+        self, user_id: int, *, name: str, analysis_type: AnalysisType | str,
+        system_prompt: str, enabled: bool,
+    ) -> Optional[TrackedUser]:
+        kind = AnalysisType(analysis_type)
+        self.conn.execute(
+            """UPDATE tracked_users SET name=?, analysis_type=?, system_prompt=?,
+                   enabled=?, updated_at=? WHERE id=?""",
+            (name, kind.value, system_prompt, int(enabled), self._clock(), user_id),
+        )
+        self.conn.commit()
+        return self.get_tracked_user(user_id)
+
+    def latest_author_name(self, sec_uid: str) -> str:
+        row = self.conn.execute(
+            """SELECT author_name FROM videos
+               WHERE author_sec_uid=? AND author_name<>''
+               ORDER BY updated_at DESC LIMIT 1""",
+            (sec_uid,),
+        ).fetchone()
+        return row["author_name"] if row else ""
+
     # ---------- 单条数据删除 ----------
     def delete_video(self, aweme_id: str) -> None:
         """删除该视频在所有数据表中的记录（不含 settings/poll_runs 全局表）。"""
@@ -396,4 +506,13 @@ def _row_to_video(row: sqlite3.Row) -> Video:
         cover_url=row["cover_url"],
         duration_ms=row["duration_ms"], overall_status=Status(row["overall_status"]),
         discovered_at=row["discovered_at"], updated_at=row["updated_at"],
+    )
+
+
+def _row_to_tracked_user(row: sqlite3.Row) -> TrackedUser:
+    return TrackedUser(
+        id=row["id"], sec_uid=row["sec_uid"], name=row["name"],
+        analysis_type=AnalysisType(row["analysis_type"]),
+        system_prompt=row["system_prompt"], enabled=bool(row["enabled"]),
+        created_at=row["created_at"], updated_at=row["updated_at"],
     )

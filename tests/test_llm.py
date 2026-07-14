@@ -1,10 +1,12 @@
 """LLM 解析与抽取单测：JSON 抠取、枚举归一化、容错、假 client 端到端。"""
 
+import json
+
 from types import SimpleNamespace
 
 from ashare.config import LLMConfig
 from ashare.llm.extractor import LLMExtractor, parse_llm_output
-from ashare.models import Stance, TargetType
+from ashare.models import AnalysisType, Stance, TargetType
 from ashare.result import Err, Ok
 
 GOOD = """```json
@@ -20,6 +22,11 @@ GOOD = """```json
   ]
 }
 ```"""
+
+GENERAL = json.dumps({
+    "title": "新品发布", "summary": "介绍了一款新产品",
+    "tags": ["科技", "新品"], "content": "产品能力与适用人群。",
+}, ensure_ascii=False)
 
 
 def test_parse_good_output():
@@ -37,6 +44,38 @@ def test_parse_good_output():
     assert o2.stance == Stance.BEARISH
     assert o2.target_type == TargetType.INDUSTRY  # "行业" 归一化
     assert o2.confidence == 1.0                # 1.5 被裁剪到 [0,1]
+
+
+def test_parse_general_output():
+    raw = json.dumps({
+        "title": "新品发布", "summary": "介绍了一款新产品",
+        "tags": ["科技", "新品"],
+        "content": "内容重点包括产品能力、发布时间和适用人群。",
+    }, ensure_ascii=False)
+
+    result = parse_llm_output(raw, AnalysisType.GENERAL)
+
+    assert isinstance(result, Ok)
+    assert result.value.tags == ["科技", "新品"]
+    assert result.value.content == "内容重点包括产品能力、发布时间和适用人群。"
+
+
+def test_general_parser_rejects_financial_output_shape():
+    result = parse_llm_output(GOOD, AnalysisType.GENERAL)
+
+    assert isinstance(result, Err)
+    assert "通用分析" in result.error
+
+
+def test_default_prompts_are_available_for_both_analysis_types():
+    from ashare.llm.prompts import default_system_prompt
+
+    financial = default_system_prompt(AnalysisType.FINANCIAL)
+    general = default_system_prompt(AnalysisType.GENERAL)
+
+    assert "行业/板块" in financial
+    assert "通用内容分析" in general
+    assert financial != general
 
 
 def test_parse_plain_json_no_fence():
@@ -85,6 +124,59 @@ def test_extractor_success():
     assert "口播文字" in a.prompt_input    # 留痕 AI 输入
     assert len(a.opinions) == 2
     assert all(op.aweme_id == "v1" for op in a.opinions)
+
+
+def test_general_extractor_uses_user_prompt_and_keeps_effective_snapshot():
+    seen = {}
+
+    class Primary:
+        model_name = "codex-cli"
+
+        def generate(self, system_prompt, user_prompt):
+            seen["system_prompt"] = system_prompt
+            return Ok(GENERAL)
+
+    extractor = LLMExtractor(
+        _cfg(), primary=Primary(), analysis_type=AnalysisType.GENERAL,
+        system_prompt="重点分析产品能力，不要讨论投资价值。",
+    )
+
+    result = extractor.extract("v1", "标题", "口播文字")
+
+    assert isinstance(result, Ok)
+    assert "重点分析产品能力" in seen["system_prompt"]
+    assert '"content"' in seen["system_prompt"]
+    assert result.value.analysis_type == AnalysisType.GENERAL
+    assert result.value.system_prompt == seen["system_prompt"]
+    assert result.value.tags == ["科技", "新品"]
+    assert result.value.content == "产品能力与适用人群。"
+
+
+def test_general_fallback_uses_same_effective_system_prompt():
+    seen = {}
+
+    class Client:
+        def __init__(self):
+            self.chat = SimpleNamespace(completions=SimpleNamespace(create=self.create))
+
+        def create(self, **kwargs):
+            seen["messages"] = kwargs["messages"]
+            return SimpleNamespace(choices=[SimpleNamespace(
+                message=SimpleNamespace(content=GENERAL),
+            )])
+
+    extractor = LLMExtractor(
+        _cfg(), client=Client(), analysis_type=AnalysisType.GENERAL,
+        system_prompt="重点提取产品信息。",
+    )
+
+    result = extractor.extract("v1", "标题", "口播文字")
+
+    assert isinstance(result, Ok)
+    sent_prompt = seen["messages"][0]["content"]
+    assert sent_prompt == result.value.system_prompt
+    assert "重点提取产品信息" in sent_prompt
+    assert '"tags"' in sent_prompt
 
 
 def test_extractor_parse_failure_keeps_raw():

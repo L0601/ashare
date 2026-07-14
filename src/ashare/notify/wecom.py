@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Callable
 from urllib.parse import parse_qs, urlparse
 
-from ..models import Stance
+from ..models import AnalysisType, Stance
 from ..result import Err, Ok, Result
 from .base import NotificationPayload, Notifier
 
@@ -91,12 +91,24 @@ def build_message(payload: NotificationPayload) -> str:
     lines.extend([f"> {' · '.join(meta)}", f"[原视频]({video.video_url})"])
     if analysis and analysis.summary:
         lines.extend(["\n#### 📌 摘要", _esc(analysis.summary)])
-    if analysis and analysis.sectors:
-        lines.append(f"🏷 板块：{_esc('、'.join(analysis.sectors))}")
-    lines.extend(_opinion_lines(analysis))
+    lines.extend(_analysis_lines(analysis))
     if payload.transcript_text:
         lines.extend(["\n#### 📝 口播原文", _esc(payload.transcript_text)])
     return "\n".join(lines)
+
+
+def _analysis_lines(analysis) -> list[str]:
+    if analysis and analysis.analysis_type == AnalysisType.GENERAL:
+        lines = []
+        if analysis.tags:
+            lines.append(f"🏷 标签：{_esc('、'.join(analysis.tags))}")
+        if analysis.content:
+            lines.extend(["\n#### 💡 内容分析", _esc(analysis.content)])
+        return lines
+    lines = []
+    if analysis and analysis.sectors:
+        lines.append(f"🏷 板块：{_esc('、'.join(analysis.sectors))}")
+    return [*lines, *_opinion_lines(analysis)]
 
 
 def _opinion_lines(analysis) -> list[str]:

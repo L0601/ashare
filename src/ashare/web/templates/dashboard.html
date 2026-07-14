@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>抖音金融观点看板</title>
+<title>抖音多用户内容分析看板</title>
 <style>
   /* ===== 设计令牌（ui-ux-pro-max: Dark OLED / 绿涨红跌）===== */
   :root{
@@ -30,6 +30,10 @@
   header .dot{width:8px;height:8px;border-radius:50%;background:var(--accent);
     box-shadow:0 0 10px var(--accent)}
   header .spacer{flex:1}
+  .user-picker{display:flex;align-items:center;gap:8px;color:var(--fg-dim);font-size:12.5px}
+  .user-picker select{min-width:150px;height:36px;background:var(--secondary);color:var(--fg);
+    border:1px solid var(--border);border-radius:8px;padding:0 32px 0 10px;font:inherit}
+  .user-picker select:focus-visible{outline:2px solid var(--info);outline-offset:2px}
   .refresh{display:flex;align-items:center;gap:8px;color:var(--fg-dim);font-size:12.5px}
   .refresh button{background:var(--secondary);color:var(--fg);border:1px solid var(--border);
     border-radius:8px;padding:6px 12px;cursor:pointer;font-size:12.5px;
@@ -193,10 +197,10 @@
   /* 设置表单 */
   .field{margin-bottom:16px}
   .field label{display:block;font-size:12.5px;color:var(--fg-dim);margin-bottom:6px}
-  .field input,.field textarea{width:100%;background:var(--secondary);border:1px solid var(--border);
+  .field input,.field textarea,.field select{width:100%;background:var(--secondary);border:1px solid var(--border);
     border-radius:8px;color:var(--fg);padding:9px 11px;font-size:13px;font-family:var(--sans)}
   .field textarea{min-height:74px;resize:vertical;font-family:var(--mono);font-size:12px;line-height:1.5}
-  .field input:focus,.field textarea:focus{outline:none;border-color:var(--info)}
+  .field input:focus,.field textarea:focus,.field select:focus{outline:none;border-color:var(--info)}
   .field .hint{font-size:11px;color:var(--fg-faint);margin-top:5px}
   .field .row2{display:flex;gap:8px}
   .field .row2 input{flex:1;min-width:0}
@@ -213,12 +217,20 @@
   .secuid-result.err{background:#2a0f0f;border:1px solid #7f1d1d;color:#FCA5A5}
   .save-msg{font-size:12.5px;margin-left:10px}
   .save-msg.ok{color:var(--accent)} .save-msg.err{color:#FCA5A5}
+  .form-actions{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
+  .form-divider{border:0;border-top:1px solid var(--border);margin:22px 0}
+  .enabled-field{display:flex;align-items:center;gap:9px;color:var(--fg-dim)}
+  .enabled-field input{width:18px;height:18px;accent-color:var(--accent)}
 
   .empty{color:var(--fg-faint);text-align:center;padding:60px 20px;font-size:14px}
   .summary-box{background:var(--secondary);border:1px solid var(--border);border-radius:10px;
     padding:14px 16px;color:#E2E8F0;line-height:1.7}
 
   @media (max-width:640px){
+    header{align-items:flex-start;flex-wrap:wrap;padding:12px 14px}
+    header .spacer{display:none}
+    .user-picker{order:2;width:100%}.user-picker select{flex:1;min-width:0}
+    .refresh{order:3;width:100%;flex-wrap:wrap}
     .row .title{max-width:100%}
     .row{grid-template-columns:1fr}
     .stages{justify-content:flex-start}
@@ -228,8 +240,12 @@
 </head>
 <body>
 <header>
-  <h1><span class="dot" aria-hidden="true"></span>抖音金融观点看板</h1>
+  <h1><span class="dot" aria-hidden="true"></span>抖音内容分析看板</h1>
   <span class="spacer"></span>
+  <label class="user-picker" for="userSelect">
+    <span>当前用户</span>
+    <select id="userSelect" aria-label="选择查看的用户"><option>加载中…</option></select>
+  </label>
   <div class="refresh">
     <span class="auto-ind" id="autoIndicator" hidden></span>
     <span class="updated" id="pullStatus"></span>
@@ -280,6 +296,32 @@
     </button>
   </div>
   <div class="dbody">
+    <div class="block"><h3>用户与分析提示词</h3>
+      <div class="form-actions" style="margin-bottom:14px">
+        <button class="btn" id="newUserBtn">新增用户</button>
+        <span class="tag">sec_uid 创建后不可修改；停用后仍保留历史数据。</span>
+      </div>
+      <div id="userForm">
+        <div class="field">
+          <label for="userSecuid">sec_uid 或主页链接</label>
+          <div class="row2"><input id="userSecuid" placeholder="MS4w… 或粘贴主页链接">
+            <button class="btn" id="validateSecuid" type="button">校验</button></div>
+          <div id="secuidResult"></div>
+        </div>
+        <div class="field"><label for="userName">用户昵称</label><input id="userName"></div>
+        <div class="field"><label for="userAnalysisType">内容类型</label>
+          <select id="userAnalysisType"><option value="financial">金融博主</option><option value="general">通用博主</option></select>
+          <div class="hint">编辑已有用户时，切换类型不会覆盖自定义提示词。</div>
+        </div>
+        <div class="field"><label for="userSystemPrompt">系统提示词</label>
+          <textarea id="userSystemPrompt" rows="12"></textarea>
+          <div class="form-actions" style="margin-top:8px"><button class="btn" id="resetUserPrompt" type="button">恢复当前类型默认提示词</button></div>
+        </div>
+        <div class="field"><label class="enabled-field"><input type="checkbox" id="userEnabled">启用定时与手动拉取</label></div>
+        <div class="form-actions"><button class="btn primary" id="userSaveBtn">保存用户</button><span class="save-msg" id="userSaveMsg"></span></div>
+      </div>
+    </div>
+    <hr class="form-divider">
     <div class="block"><h3>抓取与拉取配置</h3>
       <div id="settingsForm"></div>
       <div class="field">
@@ -317,7 +359,7 @@
 
 <script>
 "use strict";
-const STAGE_LABELS={discover:"发现",download:"下载",extract_audio:"抽音轨",transcribe:"转写",extract:"抽取观点",notify:"推送"};
+const STAGE_LABELS={discover:"发现",download:"下载",extract_audio:"抽音轨",transcribe:"转写",extract:"AI 分析",notify:"推送"};
 const STANCE_LABELS={bullish:"看多",bearish:"看空",neutral:"中性"};
 const TYPE_LABELS={stock:"个股",industry:"行业"};
 const esc=s=>String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -332,13 +374,28 @@ const icons={
 
 async function fetchJSON(url, opts){const r=await fetch(url, opts);if(!r.ok)throw new Error(r.status);return r.json();}
 
+let users=[], defaultPrompts={}, selectedUserId=null, editingUserId=null, hasEnabledUsers=false;
+async function loadUsers(preferredId=null){
+  const data=await fetchJSON("/api/users");
+  users=data.users||[]; defaultPrompts=data.default_prompts||{};
+  hasEnabledUsers=users.some(u=>u.enabled);
+  const wanted=preferredId??selectedUserId??data.default_user_id;
+  selectedUserId=users.some(u=>u.id===wanted)?wanted:(users[0]?.id??null);
+  const select=document.getElementById("userSelect");
+  select.innerHTML=users.length?users.map(u=>
+    `<option value="${u.id}" ${u.id===selectedUserId?"selected":""}>${esc(u.name)}${u.enabled?"":"（已停用）"}</option>`
+  ).join(""):'<option value="">暂无用户</option>';
+  select.disabled=!users.length;
+  renderPull(null);
+}
+
 function renderStats(s){
   const cards=[
     ["total","总视频",s.total,icons.total],
     ["ok","已完成",s.success,icons.ok],
     ["run","处理中",s.running,icons.run],
     ["fail","失败",s.failed,icons.fail],
-    ["op","金融观点",s.opinions,icons.op],
+    ["op","分析条目",s.analysis_items??s.opinions,icons.op],
   ];
   document.getElementById("stats").innerHTML=cards.map(([c,l,v,ic])=>
     `<div class="card ${c}"><div class="label">${ic}${l}</div><div class="value num">${v||0}</div></div>`).join("");
@@ -353,14 +410,16 @@ function renderRows(videos){
   const el=document.getElementById("rows");
   if(!videos.length){el.innerHTML='<div class="empty">暂无数据。请先运行 <code>ashare run-once</code> 抓取并分析视频。</div>';return;}
   el.innerHTML=videos.map(v=>{
-    const sectors=(v.sectors||[]).slice(0,4).map(s=>`<span class="pill">${esc(s)}</span>`).join(" ");
+    const labels=(v.analysis_type==="general"?v.tags:v.sectors)||[];
+    const sectors=labels.slice(0,4).map(s=>`<span class="pill">${esc(s)}</span>`).join(" ");
+    const analysisMeta=v.analysis_type==="general"?(v.has_content?"通用分析":"待分析"):`${v.opinion_count} 条`;
     return `<div class="row" tabindex="0" role="button" data-id="${esc(v.aweme_id)}">
       <div>
         <p class="title">${esc(v.title)}</p>
         <div class="meta">
           ${v.author_name?`<span><b>作者</b> ${esc(v.author_name)}</span>`:""}
           <span><b>发布</b> <span class="num">${esc(v.publish_time)}</span></span>
-          <span><b>观点</b> <span class="num">${v.opinion_count}</span> 条</span>
+          <span><b>分析</b> ${esc(analysisMeta)}</span>
           ${sectors?`<span>${sectors}</span>`:""}
         </div>
       </div>
@@ -416,12 +475,18 @@ async function openDetail(id){
     `${d.author_name?`👤 ${esc(d.author_name)} · `:""}发布 <span class="num">${esc(d.publish_time)}</span> · 抽取 <span class="num">${esc(d.analysis_time)}</span>
      · 模型 ${esc(d.llm_model||"—")} · <a href="${esc(d.video_url)}" target="_blank" rel="noopener">原视频 ↗</a>`;
   const summary=d.summary?`<div class="summary-box">${esc(d.summary)}</div>`:'<p class="tag">无摘要</p>';
+  const analysis=d.analysis_type==="general"
+    ? `<div class="block"><h3>通用内容</h3>
+        <div style="margin-bottom:10px">${(d.tags||[]).map(t=>`<span class="pill">${esc(t)}</span>`).join(" ")}</div>
+        <div class="summary-box">${esc(d.content||"无正文")}</div></div>`
+    : `<div class="block"><h3>金融观点（${d.opinions.length}）</h3>${opinionsTable(d.opinions)}</div>`;
   document.getElementById("dBody").innerHTML=`
     <div class="block"><h3>处理阶段</h3>${timeline(d.stages)}</div>
-    <div class="block"><h3>整体观点摘要</h3>${summary}</div>
-    <div class="block"><h3>金融观点（${d.opinions.length}）</h3>${opinionsTable(d.opinions)}</div>
+    <div class="block"><h3>分析摘要</h3>${summary}</div>
+    ${analysis}
     <div class="block"><h3>原文与 AI 留痕</h3>
       <details><summary>转写文字（音频 ${Math.round(d.audio_seconds||0)}s）</summary><div class="content">${esc(d.transcript||"（无）")}</div></details>
+      <details><summary>分析时的系统提示词</summary><div class="content">${esc(d.system_prompt||"（无）")}</div></details>
       <details><summary>AI 输入（Prompt）</summary><div class="content">${esc(d.prompt_input||"（无）")}</div></details>
       <details><summary>AI 原始输出</summary><div class="content">${esc(d.raw_output||"（无）")}</div></details>
     </div>`;
@@ -439,8 +504,8 @@ function renderPull(p){
   // 根据后台拉取状态驱动按钮与提示（刷新页面/多标签也能恢复"拉取中"态）
   const btn=document.getElementById("pullBtn");
   const status=document.getElementById("pullStatus");
-  if(!p){btn.disabled=false;return;}
-  btn.disabled=!!p.running;
+  if(!p){btn.disabled=!hasEnabledUsers;return;}
+  btn.disabled=!!p.running||!hasEnabledUsers;
   btn.lastChild.textContent= p.running ? " 拉取中…" : " 拉取最新";
   if(p.running){status.textContent="拉取中…";}
   else if(p.last_error){status.textContent="拉取失败："+esc(p.last_error).slice(0,40);}
@@ -486,7 +551,8 @@ async function load(){
   if(_loading)return;            // in-flight 防叠加：上次未返回不再发起
   _loading=true;
   try{
-    const data=await fetchJSON("/api/videos");
+    const query=selectedUserId===null?"":"?user_id="+encodeURIComponent(selectedUserId);
+    const data=await fetchJSON("/api/videos"+query);
     renderStats(data.stats); renderRows(data.videos); renderPull(data.pull); renderAuto(data.auto);
     const t=new Date();
     document.getElementById("updated").textContent="更新于 "+t.toLocaleTimeString("zh-CN");
@@ -537,11 +603,6 @@ function fieldHtml(s){
   }
   if(s.secret) return `<div class="field"><label>${esc(s.label)}</label>
     <textarea id="set_${s.key}" placeholder="留空则不修改">${esc(v)}</textarea></div>`;
-  if(s.key==="author_sec_uid") return `<div class="field"><label>${esc(s.label)}</label>
-    <div class="row2"><input id="set_${s.key}" value="${esc(v)}" placeholder="MS4w… 或粘贴主页链接">
-    <button class="btn" id="validateSecuid">校验</button></div>
-    <div class="hint">可粘贴博主主页链接，点校验自动解析并确认账号</div>
-    <div id="secuidResult"></div></div>`;
   const t=s.type==="int"?"number":"text";
   return `<div class="field"><label>${esc(s.label)}</label>
     <input id="set_${s.key}" type="${t}" value="${esc(v)}"></div>`;
@@ -549,13 +610,49 @@ function fieldHtml(s){
 
 let _specs=[];
 async function openSettings(){
-  const data=await fetchJSON("/api/settings");
+  const [data]=await Promise.all([fetchJSON("/api/settings"),loadUsers()]);
   _specs=data.settings;
   document.getElementById("settingsForm").innerHTML=_specs.map(fieldHtml).join("");
   document.getElementById("saveMsg").textContent="";
-  document.getElementById("validateSecuid").addEventListener("click",validateSecuid);
+  renderUserForm(users.find(u=>u.id===selectedUserId)||null);
   document.getElementById("scrim").classList.add("open");
   document.getElementById("settingsDrawer").classList.add("open");
+}
+
+function renderUserForm(user){
+  editingUserId=user?.id??null;
+  document.getElementById("userSecuid").value=user?.sec_uid||"";
+  document.getElementById("userSecuid").disabled=!!user;
+  document.getElementById("validateSecuid").disabled=!!user;
+  document.getElementById("userName").value=user?.name||"";
+  document.getElementById("userAnalysisType").value=user?.analysis_type||"financial";
+  document.getElementById("userSystemPrompt").value=user?.system_prompt||defaultPrompts.financial||"";
+  document.getElementById("userEnabled").checked=user?.enabled??true;
+  document.getElementById("secuidResult").className="";
+  document.getElementById("secuidResult").textContent="";
+  document.getElementById("userSaveMsg").textContent="";
+}
+
+function collectUser(){
+  return {sec_uid:document.getElementById("userSecuid").value.trim(),
+    name:document.getElementById("userName").value.trim(),
+    analysis_type:document.getElementById("userAnalysisType").value,
+    system_prompt:document.getElementById("userSystemPrompt").value.trim(),
+    enabled:document.getElementById("userEnabled").checked};
+}
+
+async function saveUser(){
+  const msg=document.getElementById("userSaveMsg");
+  msg.className="save-msg";msg.textContent="保存中…";
+  const url=editingUserId?`/api/users/${editingUserId}`:"/api/users";
+  try{
+    const r=await fetch(url,{method:editingUserId?"PUT":"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify(collectUser())});
+    const data=await r.json();
+    if(!r.ok){msg.className="save-msg err";msg.textContent=data.error||"保存失败";return;}
+    await loadUsers(data.user.id);renderUserForm(data.user);load();
+    msg.className="save-msg ok";msg.textContent="已保存 ✓";
+  }catch(e){msg.className="save-msg err";msg.textContent="保存失败："+esc(e.message);}
 }
 
 function collectSettings(){
@@ -585,16 +682,17 @@ async function saveSettings(){
 
 async function validateSecuid(){
   const box=document.getElementById("secuidResult");
-  const val=document.getElementById("set_author_sec_uid").value.trim();
+  const val=document.getElementById("userSecuid").value.trim();
   box.className="secuid-result"; box.textContent="校验中…";
   try{
-    const r=await fetch("/api/settings/validate-secuid",{method:"POST",
+    const r=await fetch("/api/users/validate-secuid",{method:"POST",
       headers:{"Content-Type":"application/json"},body:JSON.stringify({value:val})});
     const d=await r.json();
     if(!r.ok){box.className="secuid-result err";box.textContent="✗ "+esc(d.error);return;}
     box.className="secuid-result ok";
     box.textContent=`✓ 已绑定：${esc(d.nickname)}（${d.aweme_count} 作品）`;
-    document.getElementById("set_author_sec_uid").value=d.sec_uid;  // 回填解析出的 sec_uid
+    document.getElementById("userSecuid").value=d.sec_uid;
+    document.getElementById("userName").value=d.nickname||"";
   }catch(e){box.className="secuid-result err";box.textContent="✗ 校验失败："+esc(e.message);}
 }
 
@@ -614,13 +712,26 @@ function closeDrawers(){
 }
 
 document.getElementById("pullBtn").addEventListener("click",pull);
-document.getElementById("refreshBtn").addEventListener("click",load);
+document.getElementById("refreshBtn").addEventListener("click",async()=>{await loadUsers();load();});
+document.getElementById("userSelect").addEventListener("change",e=>{
+  selectedUserId=Number(e.target.value)||null;load();
+});
 document.getElementById("settingsBtn").addEventListener("click",openSettings);
 document.getElementById("settingsClose").addEventListener("click",closeDrawers);
 document.getElementById("settingsSave").addEventListener("click",saveSettings);
+document.getElementById("newUserBtn").addEventListener("click",()=>renderUserForm(null));
+document.getElementById("userSaveBtn").addEventListener("click",saveUser);
+document.getElementById("validateSecuid").addEventListener("click",validateSecuid);
+document.getElementById("userAnalysisType").addEventListener("change",e=>{
+  if(editingUserId===null)document.getElementById("userSystemPrompt").value=defaultPrompts[e.target.value]||"";
+});
+document.getElementById("resetUserPrompt").addEventListener("click",()=>openConfirm({
+  title:"恢复默认提示词?",msg:"当前自定义系统提示词会被所选内容类型的默认提示词替换。",
+  okLabel:"恢复",onOk:()=>{const kind=document.getElementById("userAnalysisType").value;
+    document.getElementById("userSystemPrompt").value=defaultPrompts[kind]||"";}}));
 document.getElementById("autoToggle").addEventListener("change",e=>toggleAuto(e.target.checked));
 document.getElementById("clearAllBtn").addEventListener("click",()=>openConfirm({
-  title:"清空所有数据?", msg:"将删除全部视频记录与已下载的中间文件（不影响 cookie/sec_uid 等配置），不可恢复。",
+  title:"清空所有数据?", msg:"将删除全部视频记录与已下载的中间文件（不会删除用户与提示词配置），不可恢复。",
   okLabel:"清空", onOk:clearAll}));
 document.getElementById("cdCancel").addEventListener("click",closeConfirm);
 document.getElementById("cdOk").addEventListener("click",()=>{const f=_confirmOk;closeConfirm();if(f)f();});
@@ -629,7 +740,8 @@ document.getElementById("confirmDialog").addEventListener("click",e=>{
 document.getElementById("closeBtn").addEventListener("click",closeDrawers);
 document.getElementById("scrim").addEventListener("click",closeDrawers);
 document.addEventListener("keydown",e=>{if(e.key==="Escape"){closeConfirm();closeDrawers();}});
-load();
+async function boot(){try{await loadUsers();}finally{load();}}
+boot();
 setInterval(load,2000);  // 每 2s 自动刷新（仅读本地库，不碰抖音）
 </script>
 </body>

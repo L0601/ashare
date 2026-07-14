@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 
 from ashare.config import LLMConfig
+from ashare.models import AnalysisType
 from ashare.result import Err, Ok
 
 GOOD = json.dumps({
@@ -71,6 +72,28 @@ def test_codex_backend_runs_isolated_and_keeps_transcript_out_of_arguments(tmp_p
     assert "私密口播文字" in capture["stdin"]
     assert capture["codex_home"] == str(codex_home)
     assert "opinions" in capture["schema"]["required"]
+
+
+def test_codex_backend_uses_general_schema_for_general_user(tmp_path):
+    from ashare.llm.codex import CodexCLIBackend, CodexRuntime
+
+    executable, capture_path = _fake_codex(tmp_path)
+    codex_home = tmp_path / "clean-codex"
+    codex_home.mkdir()
+    backend = CodexCLIBackend(
+        CodexRuntime(executable, codex_home, timeout=2),
+        analysis_type=AnalysisType.GENERAL,
+    )
+
+    result = backend.generate("通用规则", "口播文字")
+
+    assert isinstance(result, Ok)
+    capture = json.loads(capture_path.read_text(encoding="utf-8"))
+    schema = capture["schema"]
+    assert schema["required"] == ["title", "summary", "tags", "content"]
+    assert "opinions" not in schema["properties"]
+    assert "完成通用内容分析" in capture["stdin"]
+    assert "金融观点抽取" not in capture["stdin"]
 
 
 def test_codex_backend_times_out_without_leaking_transcript(tmp_path):
@@ -163,3 +186,31 @@ def test_extractor_factory_uses_detected_codex_as_primary(tmp_path):
 
     assert isinstance(result, Ok)
     assert result.value.llm_model == "codex-cli"
+
+
+def test_extractor_factory_wires_general_type_and_prompt(tmp_path):
+    from ashare.llm.codex import CodexRuntime
+    from ashare.llm.extractor import make_extractor
+
+    output = json.dumps({
+        "title": "新品", "summary": "摘要", "tags": ["科技"],
+        "content": "通用正文",
+    }, ensure_ascii=False)
+    executable, capture_path = _fake_codex(tmp_path, output=output)
+    codex_home = tmp_path / "clean-codex"
+    codex_home.mkdir()
+    runtime = CodexRuntime(executable, codex_home, timeout=2)
+    cfg = LLMConfig(base_url="http://fallback", api_key="k", model="fallback")
+
+    extractor = make_extractor(
+        cfg, detector=lambda timeout: runtime,
+        analysis_type=AnalysisType.GENERAL, system_prompt="关注产品能力。",
+    )
+    result = extractor.extract("v1", "标题", "口播文字")
+
+    assert isinstance(result, Ok)
+    assert result.value.analysis_type == AnalysisType.GENERAL
+    assert result.value.content == "通用正文"
+    capture = json.loads(capture_path.read_text(encoding="utf-8"))
+    assert "content" in capture["schema"]["required"]
+    assert "关注产品能力" in capture["stdin"]

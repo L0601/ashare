@@ -18,7 +18,7 @@ class Stage(str, Enum):
     DOWNLOAD = "download"        # 下载：无水印 mp4
     EXTRACT_AUDIO = "extract_audio"  # 抽音轨：ffmpeg -> 16k 单声道 wav
     TRANSCRIBE = "transcribe"    # 转写：Qwen3-ASR 语音转文字
-    EXTRACT = "extract"          # 抽取：LLM 提取金融观点
+    EXTRACT = "extract"          # 分析：LLM 生成结构化内容
     NOTIFY = "notify"            # 推送：把结果发到全部启用渠道
 
     @classmethod
@@ -48,6 +48,27 @@ class Stance(str, Enum):
 class TargetType(str, Enum):
     INDUSTRY = "industry"  # 行业/板块
     STOCK = "stock"        # 个股
+
+
+class AnalysisType(str, Enum):
+    """用户选择的内容分析结构。"""
+
+    FINANCIAL = "financial"
+    GENERAL = "general"
+
+
+@dataclass(frozen=True)
+class TrackedUser:
+    """一个受监控的抖音用户及其分析策略。"""
+
+    sec_uid: str
+    name: str
+    analysis_type: AnalysisType
+    system_prompt: str
+    enabled: bool = True
+    id: Optional[int] = None
+    created_at: int = 0
+    updated_at: int = 0
 
 
 @dataclass
@@ -91,6 +112,10 @@ class Analysis:
     llm_model: str
     prompt_input: str                      # 喂给 LLM 的完整输入（留痕）
     raw_output: str                        # LLM 原始输出（留痕，便于排错）
+    analysis_type: AnalysisType = AnalysisType.FINANCIAL
+    system_prompt: str = ""                # 实际使用的系统提示词快照
+    tags: list[str] = field(default_factory=list)  # 通用分析标签
+    content: str = ""                      # 通用分析正文
     title: str = ""                        # LLM 生成的精炼标题（视频无原生文案时用，不入库，仅回填 videos.title）
     summary: str = ""                      # 整体观点摘要
     sectors: list[str] = field(default_factory=list)  # 涉及板块标签

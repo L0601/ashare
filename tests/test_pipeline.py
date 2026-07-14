@@ -19,7 +19,7 @@ from ashare.config import (
 from ashare.db import Database
 from ashare.douyin.base import FakeDouyinClient
 from ashare.llm.extractor import LLMExtractor
-from ashare.models import Stage, Status, Video
+from ashare.models import AnalysisType, Stage, Status, Video
 from ashare.result import Err, Ok
 
 GOOD_JSON = '{"title":"看多新能源龙头","summary":"看多新能源","sectors":["新能源"],"opinions":[{"target_name":"宁德时代","target_code":"300750","target_type":"stock","stance":"看多","confidence":0.8,"logic":"龙头","quote":"看好"}]}'
@@ -47,7 +47,9 @@ def _videos():
     ]
 
 
-def _build(tmp_path, *, download_fn=None, audio_fn=None, transcriber=None):
+def _build(
+    tmp_path, *, videos=None, download_fn=None, audio_fn=None, transcriber=None,
+):
     from ashare.pipeline.runner import Pipeline
 
     cfg = _cfg(tmp_path)
@@ -65,7 +67,9 @@ def _build(tmp_path, *, download_fn=None, audio_fn=None, transcriber=None):
 
     pipe = Pipeline(
         cfg=cfg, db=db,
-        client=FakeDouyinClient(sec_uid="sec1", videos=_videos()),
+        client=FakeDouyinClient(
+            sec_uid="sec1", videos=videos if videos is not None else _videos(),
+        ),
         transcriber=transcriber or FakeTranscriber("我看好新能源板块"),
         extractor=LLMExtractor(cfg.llm, client=_fake_llm_client()),
         download_fn=download_fn or ok_download,
@@ -321,6 +325,59 @@ def test_run_once_processes_only_unfinished(tmp_path):
     assert stats2["processed"] == 0
 
 
+def test_run_once_processes_earlier_published_video_first(tmp_path):
+    pipe, _ = _build(tmp_path)
+    processed = []
+    pipe.process_video = lambda video: processed.append(video.aweme_id) or True
+
+    pipe.run_once()
+
+    assert processed == ["v2", "v1"]
+
+
+def test_run_once_keeps_latest_limit_then_processes_batch_ascending(tmp_path):
+    videos = [
+        Video("v3", "sec1", "三", "u3", publish_time=300),
+        Video("v2", "sec1", "二", "u2", publish_time=200),
+        Video("v1", "sec1", "一", "u1", publish_time=100),
+    ]
+    pipe, _ = _build(tmp_path, videos=videos)
+    processed = []
+    pipe.process_video = lambda video: processed.append(video.aweme_id) or True
+
+    pipe.run_once(limit=2)
+
+    assert processed == ["v2", "v3"]
+
+
+def test_run_once_processes_unknown_publish_time_last_with_stable_ties(tmp_path):
+    videos = [
+        Video("v2", "sec1", "二", "u2", publish_time=100),
+        Video("unknown", "sec1", "未知", "u0", publish_time=0),
+        Video("v1", "sec1", "一", "u1", publish_time=100),
+    ]
+    pipe, _ = _build(tmp_path, videos=videos)
+    processed = []
+    pipe.process_video = lambda video: processed.append(video.aweme_id) or True
+
+    pipe.run_once()
+
+    assert processed == ["v1", "v2", "unknown"]
+
+
+def test_run_once_only_processes_current_author_pending_videos(tmp_path):
+    pipe, db = _build(tmp_path)
+    db.upsert_video(Video(
+        "other", "another-user", "其他用户", "u", publish_time=50,
+    ))
+    processed = []
+    pipe.process_video = lambda video: processed.append(video.aweme_id) or True
+
+    pipe.run_once()
+
+    assert processed == ["v2", "v1"]
+
+
 def test_run_once_releases_transcriber_after_processing_batch(tmp_path):
     class TrackingTranscriber(FakeTranscriber):
         def __init__(self):
@@ -416,3 +473,30 @@ def test_build_pipeline_uses_preferred_extractor_factory(tmp_path, monkeypatch):
 
     assert pipeline.extractor is preferred
     assert seen == [cfg.llm]
+
+
+def test_build_pipeline_wires_user_strategy_and_shared_transcriber(tmp_path, monkeypatch):
+    from ashare.pipeline import runner
+
+    cfg = _cfg(tmp_path)
+    db = Database(":memory:", clock=lambda: 1000)
+    shared = FakeTranscriber("共享模型")
+    seen = []
+
+    def factory(llm_cfg, **kwargs):
+        seen.append((llm_cfg, kwargs))
+        return SimpleNamespace(extract=lambda *args: Err("unused"))
+
+    monkeypatch.setattr(runner, "make_extractor", factory)
+
+    pipeline = runner.build_pipeline(
+        cfg, db=db, transcriber=shared,
+        analysis_type=AnalysisType.GENERAL, system_prompt="通用提示词",
+    )
+
+    assert pipeline.transcriber is shared
+    assert pipeline._owns_transcriber is False
+    assert seen == [(cfg.llm, {
+        "analysis_type": AnalysisType.GENERAL,
+        "system_prompt": "通用提示词",
+    })]

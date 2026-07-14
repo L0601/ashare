@@ -13,9 +13,14 @@ from dataclasses import dataclass, field
 from typing import Protocol
 
 from ..config import LLMConfig
-from ..models import Analysis, Opinion, Stance, TargetType
+from ..models import Analysis, AnalysisType, Opinion, Stance, TargetType
 from ..result import Err, Ok, Result
-from .prompts import SYSTEM_PROMPT, build_user_prompt
+from .prompts import (
+    SYSTEM_PROMPT,
+    build_user_prompt,
+    default_system_prompt,
+    output_contract,
+)
 
 logger = logging.getLogger("ashare.llm")
 
@@ -40,6 +45,8 @@ class ParsedAnalysis:
     summary: str = ""
     sectors: list[str] = field(default_factory=list)
     opinions: list[Opinion] = field(default_factory=list)
+    tags: list[str] = field(default_factory=list)
+    content: str = ""
 
 
 class TextGenerationBackend(Protocol):
@@ -70,7 +77,9 @@ def _extract_json(raw: str) -> str | None:
     return text[start:end + 1]
 
 
-def parse_llm_output(raw: str) -> Result[ParsedAnalysis, str]:
+def parse_llm_output(
+    raw: str, analysis_type: AnalysisType = AnalysisType.FINANCIAL,
+) -> Result[ParsedAnalysis, str]:
     """把 LLM 原始文本解析为 ParsedAnalysis。纯函数，可单测。"""
     snippet = _extract_json(raw)
     if not snippet:
@@ -82,13 +91,33 @@ def parse_llm_output(raw: str) -> Result[ParsedAnalysis, str]:
     if not isinstance(data, dict):
         return Err("LLM 输出不是 JSON 对象")
 
-    opinions = [_to_opinion(o) for o in data.get("opinions", []) if isinstance(o, dict)]
+    kind = AnalysisType(analysis_type)
+    if kind == AnalysisType.GENERAL and not _valid_general_shape(data):
+        return Err("通用分析输出缺少 title/summary/tags/content 或字段类型错误")
+    opinions = []
+    if kind == AnalysisType.FINANCIAL:
+        opinions = [
+            _to_opinion(item) for item in data.get("opinions", [])
+            if isinstance(item, dict)
+        ]
     return Ok(ParsedAnalysis(
         title=str(data.get("title", "")).strip(),
         summary=str(data.get("summary", "")).strip(),
         sectors=[str(s) for s in data.get("sectors", []) if s],
         opinions=opinions,
+        tags=[str(tag) for tag in data.get("tags", []) if tag],
+        content=str(data.get("content", "")).strip(),
     ))
+
+
+def _valid_general_shape(data: dict) -> bool:
+    return (
+        isinstance(data.get("title"), str)
+        and isinstance(data.get("summary"), str)
+        and isinstance(data.get("tags"), list)
+        and all(isinstance(tag, str) for tag in data["tags"])
+        and isinstance(data.get("content"), str)
+    )
 
 
 def _to_opinion(o: dict) -> Opinion:
@@ -117,10 +146,14 @@ class LLMExtractor:
     def __init__(
         self, cfg: LLMConfig, client=None,
         primary: TextGenerationBackend | None = None,
+        analysis_type: AnalysisType = AnalysisType.FINANCIAL,
+        system_prompt: str = SYSTEM_PROMPT,
     ):
         self._cfg = cfg
         self._client = client  # 可注入假 client 测试
         self._primary = primary
+        self._analysis_type = AnalysisType(analysis_type)
+        self._system_prompt = _effective_prompt(system_prompt, self._analysis_type)
 
     def _ensure_client(self):
         if self._client is None:
@@ -150,9 +183,10 @@ class LLMExtractor:
                 return Err(f"Codex 失败：{primary_error}；{fallback_error}")
             return Err(fallback_error)
 
-        parsed = parse_llm_output(raw)
+        parsed = parse_llm_output(raw, self._analysis_type)
         return Ok(_build_analysis(
             aweme_id, self._cfg.model, user_prompt, raw, parsed,
+            self._analysis_type, self._system_prompt,
         ))
 
     def _try_primary(
@@ -161,17 +195,17 @@ class LLMExtractor:
         if self._primary is None:
             return None, ""
         try:
-            generated = self._primary.generate(SYSTEM_PROMPT, user_prompt)
+            generated = self._primary.generate(self._system_prompt, user_prompt)
         except Exception as error:
             return None, f"{type(error).__name__}: {error}"
         if not generated.is_ok():
             return None, str(generated.error)
-        parsed = parse_llm_output(generated.value)
+        parsed = parse_llm_output(generated.value, self._analysis_type)
         if not parsed.is_ok():
             return None, str(parsed.error)
         return _build_analysis(
             aweme_id, self._primary.model_name, user_prompt,
-            generated.value, parsed,
+            generated.value, parsed, self._analysis_type, self._system_prompt,
         ), ""
 
     def _call(self, user_prompt: str) -> str:
@@ -180,7 +214,7 @@ class LLMExtractor:
             temperature=self._cfg.temperature,
             timeout=self._cfg.timeout,
             messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "system", "content": self._system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
         )
@@ -193,10 +227,13 @@ def _build_analysis(
     user_prompt: str,
     raw: str,
     parsed: Result[ParsedAnalysis, str],
+    analysis_type: AnalysisType = AnalysisType.FINANCIAL,
+    system_prompt: str = SYSTEM_PROMPT,
 ) -> Analysis:
     analysis = Analysis(
         aweme_id=aweme_id, llm_model=model_name,
-        prompt_input=user_prompt, raw_output=raw,
+        prompt_input=user_prompt, raw_output=raw, analysis_type=analysis_type,
+        system_prompt=system_prompt,
     )
     if not parsed.is_ok():
         analysis.summary = f"(观点解析失败：{parsed.error}，请查看原始输出)"
@@ -205,16 +242,33 @@ def _build_analysis(
     analysis.summary = parsed.value.summary
     analysis.sectors = parsed.value.sectors
     analysis.opinions = parsed.value.opinions
+    analysis.tags = parsed.value.tags
+    analysis.content = parsed.value.content
     for opinion in analysis.opinions:
         opinion.aweme_id = aweme_id
     return analysis
 
 
-def make_extractor(cfg: LLMConfig, *, client=None, detector=None) -> LLMExtractor:
+def _effective_prompt(system_prompt: str, analysis_type: AnalysisType) -> str:
+    custom = system_prompt.strip()
+    contract = output_contract(analysis_type)
+    return f"{custom}\n\n{contract}" if custom else contract
+
+
+def make_extractor(
+    cfg: LLMConfig, *, client=None, detector=None,
+    analysis_type: AnalysisType = AnalysisType.FINANCIAL,
+    system_prompt: str | None = None,
+) -> LLMExtractor:
     """自动探测本机 Codex，并以现有 OpenAI-compatible LLM 作为兜底。"""
     from .codex import CodexCLIBackend, detect_codex_runtime
 
     detect = detector or detect_codex_runtime
+    kind = AnalysisType(analysis_type)
+    prompt = system_prompt if system_prompt is not None else default_system_prompt(kind)
     runtime = detect(cfg.timeout)
-    primary = CodexCLIBackend(runtime) if runtime else None
-    return LLMExtractor(cfg, client=client, primary=primary)
+    primary = CodexCLIBackend(runtime, analysis_type=kind) if runtime else None
+    return LLMExtractor(
+        cfg, client=client, primary=primary,
+        analysis_type=kind, system_prompt=prompt,
+    )

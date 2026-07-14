@@ -13,7 +13,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from typing import Callable
 
-from ..models import Analysis, Stance, Video
+from ..models import Analysis, AnalysisType, Stance, Video
 from ..result import Err, Ok, Result
 from .base import NotificationPayload, Notifier
 
@@ -49,23 +49,34 @@ def build_message(video: Video, transcript_text: str, analysis: Analysis | None)
 
     if analysis and analysis.summary:
         lines.append(f"\n📌 <b>摘要</b>\n{_esc(analysis.summary)}")
-    if analysis and analysis.sectors:
-        lines.append(f"🏷 板块：{_esc('、'.join(analysis.sectors))}")
-
-    opinions = analysis.opinions if analysis else []
-    if opinions:
-        lines.append("\n💡 <b>主要观点</b>")
-        for o in opinions:
-            emoji, label = _STANCE.get(o.stance, ("⚪", "中性"))
-            code = f"（{_esc(o.target_code)}）" if o.target_code else ""
-            logic = f" — {_esc(o.logic)}" if o.logic else ""
-            lines.append(f"{emoji} [{label}] {_esc(o.target_name)}{code}{logic}")
-    else:
-        lines.append("\n💡 未抽取到明确的行业/个股观点")
+    lines.extend(_analysis_lines(analysis))
 
     if transcript_text:
         lines.append(f"\n📝 <b>口播原文</b>\n{_esc(transcript_text)}")
     return "\n".join(lines)
+
+
+def _analysis_lines(analysis: Analysis | None) -> list[str]:
+    if analysis and analysis.analysis_type == AnalysisType.GENERAL:
+        lines = []
+        if analysis.tags:
+            lines.append(f"🏷 标签：{_esc('、'.join(analysis.tags))}")
+        if analysis.content:
+            lines.append(f"\n💡 <b>内容分析</b>\n{_esc(analysis.content)}")
+        return lines
+    lines = []
+    if analysis and analysis.sectors:
+        lines.append(f"🏷 板块：{_esc('、'.join(analysis.sectors))}")
+    opinions = analysis.opinions if analysis else []
+    if not opinions:
+        return [*lines, "\n💡 未抽取到明确的行业/个股观点"]
+    lines.append("\n💡 <b>主要观点</b>")
+    for opinion in opinions:
+        emoji, label = _STANCE.get(opinion.stance, ("⚪", "中性"))
+        code = f"（{_esc(opinion.target_code)}）" if opinion.target_code else ""
+        logic = f" — {_esc(opinion.logic)}" if opinion.logic else ""
+        lines.append(f"{emoji} [{label}] {_esc(opinion.target_name)}{code}{logic}")
+    return lines
 
 
 def split_message(text: str, limit: int = _TG_LIMIT) -> list[str]:

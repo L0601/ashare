@@ -8,7 +8,7 @@ import typer
 
 from .config import load_config
 
-app = typer.Typer(add_completion=False, help="抖音财经博主金融观点抽取流水线")
+app = typer.Typer(add_completion=False, help="抖音多用户内容分析流水线")
 
 
 def _setup_logging() -> None:
@@ -26,6 +26,26 @@ def _effective_config():
         return apply_overrides(cfg, db.get_settings())
     finally:
         db.close()
+
+
+def _tracked_user(cfg, user_id: int | None = None):
+    """诊断命令选择指定用户；未指定时使用数据库中的第一个用户。"""
+    from .db import Database
+    from .users import ensure_initial_tracked_user
+
+    db = Database(cfg.db_path)
+    try:
+        ensure_initial_tracked_user(db, cfg)
+        user = db.get_tracked_user(user_id) if user_id is not None else None
+        if user is None and user_id is None:
+            users = db.list_tracked_users()
+            user = users[0] if users else None
+    finally:
+        db.close()
+    if user is None:
+        typer.echo("未找到可用用户，请先在 Web 设置中添加用户。", err=True)
+        raise typer.Exit(code=1)
+    return user
 
 
 @app.command("resolve-author")
@@ -47,14 +67,14 @@ def resolve_author(name_or_url: str):
 def reset_db(
     files: bool = typer.Option(False, "--files", help="同时删除 data/videos 下的视频/音频等中间文件"),
 ):
-    """重建数据库表并清空所有数据（可选一并清除中间文件）。"""
+    """清空视频分析数据并保留用户/设置（可选清除中间文件）。"""
     from .db import Database
 
     cfg = load_config()
     db = Database(cfg.db_path)
     db.reset()
     db.close()
-    typer.echo("✓ 数据库已重建，所有数据已清空")
+    typer.echo("✓ 视频分析数据已清空（用户、提示词和全局设置已保留）")
     if files and cfg.videos_dir.exists():
         import shutil
 
@@ -66,28 +86,36 @@ def reset_db(
 def run_once(limit: int = typer.Option(None, help="本轮最多处理几条（取最新，留空=全部）")):
     """立即跑一轮：发现新视频并处理未完成视频。"""
     _setup_logging()
-    from .pipeline.runner import build_pipeline
+    from .pipeline.multi_user import run_all_users
 
     cfg = _effective_config()
-    stats = build_pipeline(cfg).run_once(limit=limit)
+    stats = run_all_users(cfg, limit=limit)
     typer.echo(f"完成：{stats}")
 
 
 @app.command("check-llm")
-def check_llm():
+def check_llm(user_id: int | None = typer.Option(None, "--user-id", help="指定数据库用户 ID")):
     """[诊断] 用内置样例验证 Codex 优先与 LLM 回退；不联网抖音、不跑 ASR。"""
     from .llm.extractor import make_extractor
 
     sample = ("大家好，我今天重点看好半导体板块，国产替代是确定性趋势，中芯国际我特别看好。"
               "另外新能源短期我偏谨慎，产能有点过剩，光伏价格战还在打。")
-    cfg = load_config()
-    res = make_extractor(cfg.llm).extract("diag", "诊断样例", sample)
+    cfg = _effective_config()
+    user = _tracked_user(cfg, user_id)
+    extractor = make_extractor(
+        cfg.llm, analysis_type=user.analysis_type, system_prompt=user.system_prompt,
+    )
+    res = extractor.extract("diag", "诊断样例", sample)
     if not res.is_ok():
         typer.echo(f"观点分析失败：{res.error}", err=True)
         raise typer.Exit(code=1)
     a = res.value
     typer.echo(f"✓ LLM 连通（model={a.llm_model}）")
     typer.echo(f"摘要：{a.summary}")
+    if user.analysis_type.value == "general":
+        typer.echo(f"标签：{a.tags}")
+        typer.echo(f"内容：{a.content}")
+        return
     typer.echo(f"板块：{a.sectors}")
     for o in a.opinions:
         typer.echo(f"  - [{o.stance.value}] {o.target_name}({o.target_code or '—'}) "
@@ -95,15 +123,15 @@ def check_llm():
 
 
 @app.command("list-videos")
-def list_videos(count: int = typer.Option(5, help="拉取条数")):
+def list_videos(
+    count: int = typer.Option(5, help="拉取条数"),
+    user_id: int | None = typer.Option(None, "--user-id", help="指定数据库用户 ID"),
+):
     """[诊断] 调用抖音抓取，打印博主最新视频列表（只读，不下载）。验证 cookie/签名/sec_uid。"""
     from .douyin.client import F2DouyinClient
 
     cfg = _effective_config()
-    sec = cfg.douyin.author_sec_uid
-    if not sec:
-        typer.echo("config.yaml 的 douyin.author_sec_uid 为空，请先 resolve-author。", err=True)
-        raise typer.Exit(code=1)
+    sec = _tracked_user(cfg, user_id).sec_uid
     # 防呆：sec_uid 必须以 MS4w 开头。否则 F2 会静默返回 cookie 账号自己的视频，抓错账号。
     if not sec.startswith("MS4w"):
         typer.echo(f"author_sec_uid 不像合法 sec_uid（应以 MS4w 开头），当前值={sec!r}。\n"
@@ -123,6 +151,7 @@ def list_videos(count: int = typer.Option(5, help="拉取条数")):
 def download_one(
     video: str = typer.Argument(..., help="视频链接(含 /video/<id>)或直接给 aweme_id"),
     audio: bool = typer.Option(False, "--audio", help="下载后顺便用 ffmpeg 抽音轨"),
+    user_id: int | None = typer.Option(None, "--user-id", help="指定数据库用户 ID"),
 ):
     """[诊断] 解析单个视频的无水印地址并下载 mp4（可选抽音轨）。只测抓取+下载，不跑 ASR/LLM。"""
     _setup_logging()
@@ -132,6 +161,7 @@ def download_one(
     from .storage import video_dir
 
     cfg = _effective_config()
+    user = _tracked_user(cfg, user_id)
     aweme_id = extract_aweme_id(video)
     typer.echo(f"aweme_id = {aweme_id}")
 
@@ -142,7 +172,7 @@ def download_one(
         raise typer.Exit(code=1)
     typer.echo(f"✓ 解析到下载地址：{url_res.value[:90]}...")
 
-    detail = client.list_latest(cfg.douyin.author_sec_uid, cfg.douyin.latest_count)
+    detail = client.list_latest(user.sec_uid, cfg.douyin.latest_count)
     video_meta = (
         next((v for v in detail.value if v.aweme_id == aweme_id), None)
         if detail.is_ok() else None
@@ -181,7 +211,7 @@ def check_asr(wav_path: str):
 
 @app.command("serve")
 def serve():
-    """启动只读 Web 看板。"""
+    """启动 Web 看板与用户配置后台。"""
     import uvicorn
 
     cfg = load_config()
