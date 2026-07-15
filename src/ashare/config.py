@@ -34,9 +34,12 @@ class LLMConfig(BaseModel):
 
 
 class ASRConfig(BaseModel):
-    engine: str = "mlx"          # mlx | transformers | fake
-    model: str = "Qwen/Qwen3-ASR-1.7B"
-    language: str = "Chinese"
+    engine: str = "sensevoice"  # sensevoice | mlx | transformers | fake
+    model: str = "models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17"
+    language: str = "zh"
+    num_threads: int = Field(default=4, ge=1)
+    chunk_seconds: int = Field(default=30, ge=10, le=120)
+    use_itn: bool = True
 
 
 class ScheduleConfig(BaseModel):
@@ -87,20 +90,57 @@ class AppConfig(BaseModel):
 # 可在 Web 后台运行时修改、并存入 DB 覆盖文件默认值的配置项。
 # 原则：常用/操作性的放这里；UA、LLM 密钥、模型路径等固化项留在文件，不进后台。
 EDITABLE_SETTINGS = [
-    {"key": "cookie", "section": "douyin", "field": "cookie", "type": "str",
-     "label": "抖音 Cookie", "secret": True},
-    {"key": "latest_count", "section": "douyin", "field": "latest_count", "type": "int",
-     "label": "最近 N 条（抓取并处理）"},
-    {"key": "poll_interval_minutes", "section": "schedule", "field": "poll_interval_minutes",
-     "type": "int", "label": "轮询间隔(分钟)"},
-    {"key": "telegram_enabled", "section": "telegram", "field": "enabled", "type": "bool",
-     "label": "Telegram 推送"},
-    {"key": "telegram_bot_token", "section": "telegram", "field": "bot_token", "type": "str",
-     "label": "Telegram Bot Token", "secret": True},
-    {"key": "telegram_chat_id", "section": "telegram", "field": "chat_id", "type": "str",
-     "label": "Telegram Chat ID"},
-    {"key": "wecom_enabled", "section": "wecom", "field": "enabled", "type": "bool",
-     "label": "企业微信推送"},
+    {
+        "key": "cookie",
+        "section": "douyin",
+        "field": "cookie",
+        "type": "str",
+        "label": "抖音 Cookie",
+        "secret": True,
+    },
+    {
+        "key": "latest_count",
+        "section": "douyin",
+        "field": "latest_count",
+        "type": "int",
+        "label": "最近 N 条（抓取并处理）",
+    },
+    {
+        "key": "poll_interval_minutes",
+        "section": "schedule",
+        "field": "poll_interval_minutes",
+        "type": "int",
+        "label": "轮询间隔(分钟)",
+    },
+    {
+        "key": "telegram_enabled",
+        "section": "telegram",
+        "field": "enabled",
+        "type": "bool",
+        "label": "Telegram 推送",
+    },
+    {
+        "key": "telegram_bot_token",
+        "section": "telegram",
+        "field": "bot_token",
+        "type": "str",
+        "label": "Telegram Bot Token",
+        "secret": True,
+    },
+    {
+        "key": "telegram_chat_id",
+        "section": "telegram",
+        "field": "chat_id",
+        "type": "str",
+        "label": "Telegram Chat ID",
+    },
+    {
+        "key": "wecom_enabled",
+        "section": "wecom",
+        "field": "enabled",
+        "type": "bool",
+        "label": "企业微信推送",
+    },
 ]
 
 

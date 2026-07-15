@@ -8,6 +8,7 @@ import pytest
 from ashare.asr.base import FakeTranscriber, make_transcriber
 from ashare.asr import qwen3
 from ashare.asr.qwen3 import Qwen3Transcriber, _result_text
+from ashare.asr.sensevoice import SenseVoiceTranscriber
 from ashare.config import ASRConfig
 from ashare.result import Ok
 
@@ -22,6 +23,11 @@ def test_fake_transcriber():
 def test_make_transcriber_fake():
     t = make_transcriber(ASRConfig(engine="fake"))
     assert isinstance(t, FakeTranscriber)
+
+
+def test_make_transcriber_sensevoice():
+    t = make_transcriber(ASRConfig(engine="sensevoice"))
+    assert isinstance(t, SenseVoiceTranscriber)
 
 
 def test_make_transcriber_unknown():
