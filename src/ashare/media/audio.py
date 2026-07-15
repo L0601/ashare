@@ -13,7 +13,7 @@ from typing import Callable
 
 from ..result import Err, Ok, Result
 
-# Qwen3-ASR 期望 16kHz 采样率；单声道足够语音识别且更省资源
+# 本地 ASR 使用 16kHz 采样率；单声道足够语音识别且更省资源
 TARGET_SAMPLE_RATE = 16000
 
 
