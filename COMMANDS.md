@@ -14,16 +14,21 @@ brew install ffmpeg
 ```bash
 cd /Users/ltc/Desktop/ashare
 
-# 创建并激活虚拟环境
-python3 -m venv .venv
+# 创建并激活 Python 3.12 虚拟环境
+/usr/local/bin/python3.12 -m venv .venv
 source .venv/bin/activate
 
 # 安装项目本体 + 基础依赖，并注册 `ashare` 命令（关键，缺这步会 command not found）
 pip install -e .
 
-# 语音识别后端二选一（Apple Silicon / M4 Pro 推荐 mlx）
-pip install -e ".[asr-mlx]"            # MLX，M 系列芯片最优
-pip install -e ".[asr-transformers]"   # transformers + MPS/CPU，兜底
+# Intel Mac 语音识别：SenseVoice Small INT8 + sherpa-onnx
+pip install -e ".[asr-sensevoice]"
+
+# 下载约 230 MB 的本地 INT8 模型
+mkdir -p models
+curl -L -o /tmp/sensevoice.tar.bz2 \
+  https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17.tar.bz2
+tar -xjf /tmp/sensevoice.tar.bz2 -C models
 
 # 跑测试需要的依赖
 pip install -e ".[dev]"
@@ -41,7 +46,8 @@ cp config.example.yaml config.yaml
 #   douyin.cookie          抖音网页版登录后的 Cookie
 #   douyin.author_sec_uid  仅用于首次迁移第一个用户，之后在 Web 设置中管理
 #   llm.base_url/api_key/model  兼容 OpenAI 的 LLM 服务（如 DeepSeek）
-#   asr.engine             正式跑改为 mlx；开发期可用 fake 跑通链路
+#   asr.engine             正式跑使用 sensevoice；开发期可用 fake
+#   asr.chunk_seconds      长音频切片目标时长，Intel Mac 默认 30 秒
 #   telegram.enabled/bot_token/chat_id  处理完成后推送 Telegram（也可在 Web 后台设置）
 ```
 
@@ -97,14 +103,17 @@ ashare list-videos --count 5 [--user-id ID]
 ashare download-one "https://www.douyin.com/video/74123..."          # 仅下载 mp4
 ashare download-one "https://www.douyin.com/video/74123..." --audio  # 下载并 ffmpeg 抽音轨
 
-# 步骤4：验证 ASR（需先装 mlx 后端，首次自动下权重数 GB）
-#   先把 config.yaml 的 asr.engine 从 fake 改为 mlx
-pip install -e ".[asr-mlx]"
+# 步骤4：验证 ASR（CPU INT8；需先下载 SenseVoice 模型）
+#   config.yaml 的 asr.engine 使用 sensevoice
+pip install -e ".[asr-sensevoice]"
 ashare check-asr data/videos/<YYYY-MM-DD>_<某个aweme_id>/audio.wav
 
 # 步骤3+5：下载、抽音轨、转写、抽取 串起来一次跑完
 ashare run-once
 ```
+
+> 长音频会自动在 30 秒附近的低音量位置切片，并复用同一模型逐段识别。
+> 本机实测 14 分 48 秒音频由优化前约 894 秒降至约 42 秒。
 
 ## 3.6 重置数据
 
