@@ -310,3 +310,10 @@ def test_dashboard_contains_user_selector_and_prompt_editor():
     assert 'id="resetUserPrompt"' in html
     assert 'fetchJSON("/api/users")' in html
     assert 'user_id=' in html
+
+
+def test_dashboard_conditionally_renders_video_duration():
+    html = (Path(__file__).parents[1] / "src/ashare/web/templates/dashboard.html").read_text()
+
+    assert "v.duration_label?" in html
+    assert "d.duration_label?" in html
