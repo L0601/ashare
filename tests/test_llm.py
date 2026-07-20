@@ -74,7 +74,12 @@ def test_default_prompts_are_available_for_both_analysis_types():
     general = default_system_prompt(AnalysisType.GENERAL)
 
     assert "行业/板块" in financial
-    assert "通用内容分析" in general
+    assert "专业的内容观点提炼编辑" in general
+    assert "非金融" not in general
+    assert "主要观点" in general
+    assert "分论点/理由" in general
+    assert "文中依据" in general
+    assert "转述误写成作者立场" in general
     assert financial != general
 
 
