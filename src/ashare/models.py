@@ -17,7 +17,7 @@ class Stage(str, Enum):
     DISCOVER = "discover"        # 发现：抓取博主最新视频元数据
     DOWNLOAD = "download"        # 下载：无水印 mp4
     EXTRACT_AUDIO = "extract_audio"  # 抽音轨：ffmpeg -> 16k 单声道 wav
-    TRANSCRIBE = "transcribe"    # 转写：Qwen3-ASR 语音转文字
+    TRANSCRIBE = "transcribe"    # 转写：本地 ASR 语音转文字
     EXTRACT = "extract"          # 分析：LLM 生成结构化内容
     NOTIFY = "notify"            # 推送：把结果发到全部启用渠道
 

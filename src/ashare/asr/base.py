@@ -1,6 +1,6 @@
 """ASR 抽象接口、结果类型、Fake 实现与工厂。
 
-转写器抽象成接口，pipeline 只依赖接口；引擎（mlx/transformers/fake）由配置选择。
+转写器抽象成接口，pipeline 只依赖接口；引擎由配置选择。
 算法与 IO 分离：上层只给 wav 路径，拿回文本，不关心模型细节。
 """
 
@@ -47,6 +47,16 @@ def make_transcriber(cfg: ASRConfig) -> Transcriber:
     engine = cfg.engine.lower()
     if engine == "fake":
         return FakeTranscriber()
+    if engine == "sensevoice":
+        from .sensevoice import SenseVoiceTranscriber
+
+        return SenseVoiceTranscriber(
+            model=cfg.model,
+            language=cfg.language,
+            num_threads=cfg.num_threads,
+            chunk_seconds=cfg.chunk_seconds,
+            use_itn=cfg.use_itn,
+        )
     if engine in ("mlx", "transformers"):
         from .qwen3 import Qwen3Transcriber
 

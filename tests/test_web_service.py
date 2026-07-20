@@ -17,7 +17,10 @@ from ashare.web.service import dashboard_data, fmt_time, video_detail, video_sum
 
 def _seed():
     db = Database(":memory:", clock=lambda: 1700000000)
-    db.upsert_video(Video("v1", "sec", "看好半导体", "https://d/v1", publish_time=1704135845))
+    db.upsert_video(Video(
+        "v1", "sec", "看好半导体", "https://d/v1",
+        publish_time=1704135845, duration_ms=888001,
+    ))
     db.set_video_status("v1", Status.SUCCESS)
     db.set_stage("v1", Stage.DISCOVER, Status.SUCCESS)
     db.set_stage("v1", Stage.DOWNLOAD, Status.SUCCESS)
@@ -43,6 +46,8 @@ def test_video_summary():
     assert s["overall_status"] == "success"
     assert s["opinion_count"] == 1
     assert s["sectors"] == ["半导体"]
+    assert s["duration_seconds"] == 888
+    assert s["duration_label"] == "14m 48s"
     # 阶段补全到 6 个（含推送），未跑的为 pending
     assert len(s["stages"]) == 6
     statuses = {st["stage"]: st["status"] for st in s["stages"]}
@@ -64,6 +69,16 @@ def test_stage_list_includes_second_precision_and_duration():
     assert stage["finished_at"] == "2023-11-15 06:13:27"
     assert stage["duration_seconds"] == 7
     assert stage["duration_label"] == "7s"
+
+
+def test_video_summary_omits_unknown_duration():
+    db = Database(":memory:")
+    db.upsert_video(Video("v1", "sec", "t", "u", publish_time=1))
+
+    summary = video_summary(db, "v1")
+
+    assert summary["duration_seconds"] == 0
+    assert summary["duration_label"] == ""
 
 
 def test_dashboard_stats():
@@ -112,6 +127,8 @@ def test_video_detail():
     assert d["opinions"][0]["target_name"] == "中芯国际"
     assert d["opinions"][0]["stance"] == "bullish"
     assert d["audio_seconds"] == 30
+    assert d["duration_seconds"] == 888
+    assert d["duration_label"] == "14m 48s"
 
 
 def test_video_detail_missing():

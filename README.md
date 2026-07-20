@@ -4,7 +4,7 @@
 
 ```
 发现最新视频 → 下载无水印 mp4 → ffmpeg 抽音轨(16k 单声道)
-  → 本地 Qwen3-ASR-1.7B 转写 → Codex Agent 优先分析（失败回退 LLM）
+  → 本地 SenseVoice Small INT8 转写 → Codex Agent 优先分析（失败回退 LLM）
   → 推送 Telegram / 企业微信
 ```
 
@@ -20,7 +20,7 @@ SQLite，中间文件按视频分目录存放，并提供 **Web 后台**（看�
 | `src/ashare/db.py` | SQLite 持久化（tracked_users / videos / transcripts / analyses / opinions / settings 等） |
 | `src/ashare/douyin/` | 抓取层：F2 封装（`client.py`，含 sec_uid/profile 解析）+ 无水印下载（`downloader.py`），抽象接口 + Fake |
 | `src/ashare/media/audio.py` | ffmpeg 抽音轨（命令构造与执行分离） |
-| `src/ashare/asr/` | 语音转写：接口 + Qwen3-ASR（MLX/transformers）+ Fake |
+| `src/ashare/asr/` | 语音转写：SenseVoice INT8（Intel CPU）+ 旧 Qwen 后端 + Fake |
 | `src/ashare/llm/` | 观点抽取：本机 Codex CLI Agent 优先 + 兼容 OpenAI LLM 兜底 + 防御性 JSON 解析 |
 | `src/ashare/notify/` | 推送层：中立通知载荷 + Telegram / 企业微信群机器人渲染与发送 + Fake/Noop |
 | `src/ashare/pipeline/` | 单用户流水线 + 多用户串行协调（共享一份 ASR）+ 定时调度 |
@@ -33,15 +33,20 @@ SQLite，中间文件按视频分目录存放，并提供 **Web 后台**（看�
 ## 安装
 
 ```bash
-python3 -m venv .venv && source .venv/bin/activate
+python3.12 -m venv .venv && source .venv/bin/activate
 pip install -e .                 # 基础依赖（抓取/LLM/Web/调度）
-# 语音识别后端二选一（Apple Silicon 推荐 mlx）：
-pip install -e ".[asr-mlx]"          # MLX，M 系列芯片最优
-pip install -e ".[asr-transformers]" # transformers + MPS/CPU，兜底
+pip install -e ".[asr-sensevoice]"   # Intel Mac：CPU INT8
 pip install -e ".[dev]"              # 跑测试用
 ```
 
-需预装 `ffmpeg`（`brew install ffmpeg`）。Qwen3-ASR-1.7B 权重首次运行会自动下载（数 GB）。
+需预装 `ffmpeg`（`brew install ffmpeg`）。SenseVoice 模型需下载一次：
+
+```bash
+mkdir -p models
+curl -L -o /tmp/sensevoice.tar.bz2 \
+  https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17.tar.bz2
+tar -xjf /tmp/sensevoice.tar.bz2 -C models
+```
 
 ## 配置
 
@@ -53,8 +58,11 @@ cp config.example.yaml config.yaml   # config.yaml 已被 .gitignore 忽略
 - `douyin.cookie`：抖音网页版登录后的 Cookie（公开内容理论可游客访问，但带登录 Cookie 显著降低触发风控概率）
 - `douyin.author_sec_uid` / `author_name`：仅用于首次启动迁移第一个用户；之后在 Web「设置」中管理用户
 - `llm.base_url` / `llm.api_key` / `llm.model`：兼容 OpenAI 的服务（如 DeepSeek）
-- `asr.engine`：`mlx` / `transformers` / `fake`（开发期可用 `fake` 跑通链路）
-- `asr.model`：模型名或本地路径（如 `mlx-community/Qwen3-ASR-1.7B-8bit`，或已下载到本地的目录）
+- `asr.engine`：Intel Mac 使用 `sensevoice`；`fake` 仅用于测试
+- `asr.model`：SenseVoice 模型目录或 `model.int8.onnx` 文件路径
+- `asr.num_threads`：CPU 推理线程数，当前四核 Intel Mac 使用 `4`
+- `asr.chunk_seconds`：长音频切片目标时长，默认 `30` 秒；会在附近低音量位置切分
+- `asr.use_itn`：是否开启逆文本归一化，默认开启
 - `douyin.user_agent`：默认桌面浏览器 UA（已与 web 接口/cookie 来源一致），一般无需改
 - `telegram.enabled` / `telegram.bot_token` / `telegram.chat_id`：视频处理完成后推送到 Telegram（群 id 为负数）
 - `wecom.enabled` / `wecom.webhook_url`：视频处理完成后推送到企业微信群机器人；webhook 只写本地配置，禁止提交 Git
@@ -97,7 +105,7 @@ ashare schedule
 ashare check-llm [--user-id ID]        # 按指定/第一个用户验证 Codex 优先 + LLM 回退
 ashare list-videos --count 5 [--user-id ID]  # 按指定/第一个用户验证抓取
 ashare download-one "<视频链接>" --audio  # 验解析+下载+抽音轨（不跑 ASR/LLM）
-ashare check-asr data/videos/<YYYY-MM-DD>_<id>/audio.wav   # 验 Qwen3-ASR 转写
+ashare check-asr data/videos/<YYYY-MM-DD>_<id>/audio.wav   # 验 SenseVoice INT8 转写
 ashare reset-db [--files]              # 清空视频分析数据，保留用户与配置
 ```
 
@@ -146,4 +154,5 @@ pytest        # 全部核心逻辑单测（db / 抓取解析 / 下载重试 / �
 - F2 依赖抖音 Web 签名（X-Bogus），抖音更新算法时可能临时失效；抓取层已抽象成接口，
   必要时可切换到浏览器自动化方案（Playwright/MediaCrawler）。
 - Cookie 会过期，需定期手动更新到 `config.yaml`。
-- 真实抓取与真实 ASR 推理需联网/模型权重，未纳入单测；单测覆盖的是可离线验证的纯逻辑。
+- SenseVoice 模型下载后完全离线推理；真实模型推理未纳入单测，单测覆盖可离线验证的装配与逻辑。
+- SenseVoice 会把长音频按约 30 秒切片并复用模型，避免整段输入导致推理时间急剧增加。

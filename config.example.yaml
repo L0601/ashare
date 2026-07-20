@@ -25,12 +25,17 @@ llm:
   temperature: 0.2
 
 asr:
-  # 引擎：mlx（Apple Silicon 推荐） | transformers（兜底） | fake（测试用）
-  engine: "mlx"
-  # 模型名或本地路径
-  model: "Qwen/Qwen3-ASR-1.7B"
-  # 识别语言提示
-  language: "Chinese"
+  # Intel Mac 默认：SenseVoice Small INT8 + sherpa-onnx CPU
+  engine: "sensevoice"
+  # 模型目录，内含 model.int8.onnx 与 tokens.txt
+  model: "models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17"
+  language: "zh"
+  # 与本机 4 个物理核心匹配
+  num_threads: 4
+  # 长音频按静音附近切片，避免整段推理随时长急剧变慢
+  chunk_seconds: 30
+  # 开启逆文本归一化，例如把口述数字转为阿拉伯数字
+  use_itn: true
 
 schedule:
   # 轮询间隔（分钟）。活跃博主建议 90~120，避免过频触发风控。

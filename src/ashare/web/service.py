@@ -38,6 +38,14 @@ def fmt_duration(seconds: int | None) -> str:
     return f"{hours}h {minutes}m {sec}s"
 
 
+def _video_duration(duration_ms: int) -> tuple[int, str]:
+    """视频毫秒时长转为看板秒数和标签；无时长时返回空标签。"""
+    if duration_ms <= 0:
+        return 0, ""
+    seconds = max(1, (duration_ms + 500) // 1000)
+    return seconds, fmt_duration(seconds)
+
+
 def _stage_list(stage_rows: dict) -> list[dict]:
     """把某视频的阶段状态整理为有序列表（含未开始的阶段）。"""
     out = []
@@ -64,12 +72,15 @@ def video_summary(db: Database, aweme_id: str) -> dict:
     v = db.get_video(aweme_id)
     stages = db.get_stages(aweme_id)
     analysis = db.get_analysis(aweme_id)
+    duration_seconds, duration_label = _video_duration(v.duration_ms)
     return {
         "aweme_id": v.aweme_id,
         "title": v.title or "(待分析/无标题)",
         "author_name": v.author_name,
         "video_url": v.video_url,
         "publish_time": fmt_time(v.publish_time),
+        "duration_seconds": duration_seconds,
+        "duration_label": duration_label,
         "overall_status": v.overall_status.value,
         "stages": _stage_list(stages),
         "opinion_count": len(analysis.opinions) if analysis else 0,

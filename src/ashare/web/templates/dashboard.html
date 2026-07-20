@@ -419,6 +419,7 @@ function renderRows(videos){
         <div class="meta">
           ${v.author_name?`<span><b>作者</b> ${esc(v.author_name)}</span>`:""}
           <span><b>发布</b> <span class="num">${esc(v.publish_time)}</span></span>
+          ${v.duration_label?`<span><b>时长</b> <span class="num">${esc(v.duration_label)}</span></span>`:""}
           <span><b>分析</b> ${esc(analysisMeta)}</span>
           ${sectors?`<span>${sectors}</span>`:""}
         </div>
@@ -472,7 +473,7 @@ async function openDetail(id){
   const d=await fetchJSON("/api/videos/"+encodeURIComponent(id));
   document.getElementById("dTitle").textContent=d.title;
   document.getElementById("dMeta").innerHTML=
-    `${d.author_name?`👤 ${esc(d.author_name)} · `:""}发布 <span class="num">${esc(d.publish_time)}</span> · 抽取 <span class="num">${esc(d.analysis_time)}</span>
+    `${d.author_name?`👤 ${esc(d.author_name)} · `:""}发布 <span class="num">${esc(d.publish_time)}</span>${d.duration_label?` · 时长 <span class="num">${esc(d.duration_label)}</span>`:""} · 抽取 <span class="num">${esc(d.analysis_time)}</span>
      · 模型 ${esc(d.llm_model||"—")} · <a href="${esc(d.video_url)}" target="_blank" rel="noopener">原视频 ↗</a>`;
   const summary=d.summary?`<div class="summary-box">${esc(d.summary)}</div>`:'<p class="tag">无摘要</p>';
   const analysis=d.analysis_type==="general"
