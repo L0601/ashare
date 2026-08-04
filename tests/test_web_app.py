@@ -267,6 +267,76 @@ def test_delete_one_video_removes_dated_video_dir(tmp_path):
     assert not vdir.exists()
 
 
+def test_delete_user_removes_own_data_and_keeps_other_user(tmp_path):
+    cfg = _cfg(tmp_path)
+    c = _client(tmp_path, _PM())
+    target = c.get("/api/users").json()["users"][0]
+    other = c.post("/api/users", json={
+        "sec_uid": "MS4w_other", "name": "保留用户",
+        "analysis_type": "general", "system_prompt": "提示词",
+    }).json()["user"]
+    db = Database(cfg.db_path)
+    db.upsert_video(Video(
+        "v2", other["sec_uid"], "保留视频", "https://d/v2", publish_time=200,
+    ))
+    db.close()
+    target_dir = cfg.videos_dir / "1970-01-01_v1"
+    other_dir = cfg.videos_dir / "1970-01-01_v2"
+    target_dir.mkdir(parents=True)
+    other_dir.mkdir(parents=True)
+    (target_dir / "video.mp4").write_bytes(b"target")
+    (other_dir / "video.mp4").write_bytes(b"other")
+
+    response = c.delete(f"/api/users/{target['id']}")
+
+    assert response.status_code == 200
+    assert response.json()["deleted_videos"] == 1
+    assert response.json()["file_errors"] == []
+    assert not target_dir.exists()
+    assert other_dir.exists()
+    users = c.get("/api/users").json()["users"]
+    assert [user["id"] for user in users] == [other["id"]]
+    assert c.get(f"/api/videos?user_id={other['id']}").json()["stats"]["total"] == 1
+    assert c.delete(f"/api/users/{target['id']}").status_code == 404
+
+
+def test_delete_last_user_remains_empty_after_app_restart(tmp_path):
+    cfg = _cfg(tmp_path)
+    c = _client(tmp_path, _PM())
+    user = c.get("/api/users").json()["users"][0]
+
+    assert c.delete(f"/api/users/{user['id']}").status_code == 200
+    assert c.get("/api/users").json()["users"] == []
+
+    restarted = TestClient(create_app(cfg, pull_manager=_PM()))
+    assert restarted.get("/api/users").json()["users"] == []
+
+
+def test_delete_user_rejects_while_pull_is_running(tmp_path):
+    import threading
+
+    gate = threading.Event()
+    pm = PullManager(
+        run_fn=lambda: (gate.wait(timeout=2), {"new": 0, "processed": 0})[1],
+    )
+    c = _client(tmp_path, pm)
+    user = c.get("/api/users").json()["users"][0]
+    assert c.post("/api/pull").json()["started"] is True
+    for _ in range(200):
+        if pm.status()["running"]:
+            break
+        time.sleep(0.005)
+
+    try:
+        response = c.delete(f"/api/users/{user['id']}")
+    finally:
+        gate.set()
+
+    assert response.status_code == 409
+    assert "拉取处理中" in response.json()["error"]
+    assert c.get(f"/api/users").json()["users"][0]["id"] == user["id"]
+
+
 def test_clear_all_videos(tmp_path):
     c = _client(tmp_path, _PM())
     assert c.delete("/api/videos").json()["ok"] is True
@@ -308,7 +378,10 @@ def test_dashboard_contains_user_selector_and_prompt_editor():
     assert 'id="userAnalysisType"' in html
     assert 'id="userSystemPrompt"' in html
     assert 'id="resetUserPrompt"' in html
+    assert 'id="deleteUserBtn"' in html
+    assert 'id="userDanger"' in html
     assert 'fetchJSON("/api/users")' in html
+    assert '/api/users/${userId}' in html
     assert 'user_id=' in html
 
 

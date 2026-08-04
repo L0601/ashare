@@ -25,7 +25,7 @@ from ..config import (
 from ..db import Database
 from ..douyin.base import DouyinClient
 from ..llm.prompts import FINANCIAL_SYSTEM_PROMPT, GENERAL_SYSTEM_PROMPT, default_system_prompt
-from ..models import AnalysisType, TrackedUser
+from ..models import AnalysisType, TrackedUser, Video
 from ..storage import video_dir
 from ..users import ensure_initial_tracked_user
 from .pull import PullManager
@@ -180,6 +180,28 @@ def create_app(
         finally:
             db.close()
 
+    @app.delete("/api/users/{user_id}")
+    def api_delete_user(user_id: int):
+        if pull.status().get("running"):
+            return JSONResponse(
+                {"error": "当前正在拉取处理中，请等待本轮结束后再删除用户"},
+                status_code=409,
+            )
+        db = open_db()
+        try:
+            user, videos = db.delete_tracked_user(user_id)
+        finally:
+            db.close()
+        if user is None:
+            return JSONResponse({"error": "用户不存在"}, status_code=404)
+        file_errors = _remove_video_directories(file_cfg.videos_dir, videos)
+        return {
+            "ok": True,
+            "deleted_user": _user_dict(user),
+            "deleted_videos": len(videos),
+            "file_errors": file_errors,
+        }
+
     @app.get("/api/settings")
     def api_get_settings():
         vals = editable_values(effective())
@@ -256,6 +278,22 @@ def _user_dict(user: TrackedUser) -> dict:
         "analysis_type": user.analysis_type.value,
         "system_prompt": user.system_prompt, "enabled": user.enabled,
     }
+
+
+def _remove_video_directories(
+    videos_dir: Path, videos: list[Video],
+) -> list[dict[str, str]]:
+    """删除已知视频目录；数据库已删除时以告警返回残留文件。"""
+    errors = []
+    for video in videos:
+        path = video_dir(videos_dir, video, video.aweme_id)
+        if not path.exists():
+            continue
+        try:
+            shutil.rmtree(path)
+        except OSError as error:
+            errors.append({"directory": path.name, "error": str(error)})
+    return errors
 
 
 def _validate_user_payload(

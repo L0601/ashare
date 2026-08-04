@@ -238,6 +238,31 @@ def test_migrate_backfills_existing_analysis_prompt_snapshot(tmp_path):
     database.close()
 
 
+def test_migrate_only_upgrades_legacy_default_general_prompt(tmp_path):
+    from ashare.llm.prompts import (
+        GENERAL_SYSTEM_PROMPT,
+        LEGACY_GENERAL_SYSTEM_PROMPT,
+    )
+
+    path = tmp_path / "prompt-migration.db"
+    database = Database(path, clock=lambda: 1000)
+    legacy = database.create_tracked_user(
+        sec_uid="MS4w_legacy", name="旧默认", analysis_type="general",
+        system_prompt=LEGACY_GENERAL_SYSTEM_PROMPT,
+    )
+    custom = database.create_tracked_user(
+        sec_uid="MS4w_custom", name="自定义", analysis_type="general",
+        system_prompt="用户自定义通用提示词",
+    )
+    database.close()
+
+    migrated = Database(path, clock=lambda: 2000)
+
+    assert migrated.get_tracked_user(legacy.id).system_prompt == GENERAL_SYSTEM_PROMPT
+    assert migrated.get_tracked_user(custom.id).system_prompt == "用户自定义通用提示词"
+    migrated.close()
+
+
 def test_db_usable_across_threads(tmp_path):
     """连接需能跨线程使用（调度器主线程建、工作线程用),否则 sqlite 报 ProgrammingError。"""
     import threading
@@ -330,6 +355,47 @@ def test_tracked_user_can_change_strategy_and_be_disabled(db):
     assert updated.system_prompt == "新提示词"
     assert updated.enabled is False
     assert db.list_tracked_users(enabled_only=True) == []
+
+
+def test_delete_tracked_user_cascades_only_its_video_data(db):
+    target = db.create_tracked_user(
+        sec_uid="MS4w_target", name="待删除",
+        analysis_type="general", system_prompt="提示词",
+    )
+    other = db.create_tracked_user(
+        sec_uid="MS4w_other", name="保留用户",
+        analysis_type="general", system_prompt="提示词",
+    )
+    db.upsert_video(Video("v1", target.sec_uid, "目标视频", "u1", 100))
+    db.upsert_video(Video("v2", other.sec_uid, "保留视频", "u2", 200))
+    db.set_stage("v1", Stage.DOWNLOAD, Status.SUCCESS)
+    db.set_notification_delivery("v1", "telegram", Status.SUCCESS)
+    db.save_transcript(Transcript("v1", "目标文本", "fake"))
+    db.save_analysis(Analysis(
+        "v1", "m", "in", "out",
+        opinions=[Opinion("A", TargetType.STOCK, Stance.BULLISH, "x")],
+    ))
+    db.save_transcript(Transcript("v2", "保留文本", "fake"))
+    db.set_settings({"cookie": "ck"})
+    poll_id = db.start_poll()
+    db.finish_poll(poll_id, 1, "success")
+
+    deleted, videos = db.delete_tracked_user(target.id)
+
+    assert deleted.id == target.id
+    assert [video.aweme_id for video in videos] == ["v1"]
+    assert db.get_tracked_user(target.id) is None
+    assert db.get_video("v1") is None
+    assert db.get_stage_status("v1", Stage.DOWNLOAD) == Status.PENDING
+    assert db.get_notification_status("v1", "telegram") == Status.PENDING
+    assert db.get_transcript("v1") is None
+    assert db.get_analysis("v1") is None
+    assert db.get_opinions("v1") == []
+    assert db.get_tracked_user(other.id) is not None
+    assert db.get_video("v2") is not None
+    assert db.get_transcript("v2").text == "保留文本"
+    assert db.get_settings()["cookie"] == "ck"
+    assert db.conn.execute("SELECT COUNT(*) FROM poll_runs").fetchone()[0] == 1
 
 
 def test_reset_clears_all_data(db):

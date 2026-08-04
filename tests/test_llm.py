@@ -74,12 +74,13 @@ def test_default_prompts_are_available_for_both_analysis_types():
     general = default_system_prompt(AnalysisType.GENERAL)
 
     assert "行业/板块" in financial
-    assert "专业的内容观点提炼编辑" in general
+    assert "专业的通用内容编辑" in general
     assert "非金融" not in general
-    assert "主要观点" in general
-    assert "分论点/理由" in general
-    assert "文中依据" in general
-    assert "转述误写成作者立场" in general
+    assert "不要预设内容属于金融" in general
+    assert "新闻资讯或知识科普" in general
+    assert "教程或经验分享" in general
+    assert "故事讲述或人物访谈" in general
+    assert "不要把所有内容都改写成“作者观点”" in general
     assert financial != general
 
 
@@ -182,6 +183,27 @@ def test_general_fallback_uses_same_effective_system_prompt():
     assert sent_prompt == result.value.system_prompt
     assert "重点提取产品信息" in sent_prompt
     assert '"tags"' in sent_prompt
+
+
+def test_general_extractor_without_explicit_prompt_uses_general_default():
+    from ashare.llm.prompts import GENERAL_SYSTEM_PROMPT
+
+    seen = {}
+
+    class Primary:
+        model_name = "codex-cli"
+
+        def generate(self, system_prompt, user_prompt):
+            seen["system_prompt"] = system_prompt
+            return Ok(GENERAL)
+
+    result = LLMExtractor(
+        _cfg(), primary=Primary(), analysis_type=AnalysisType.GENERAL,
+    ).extract("v1", "标题", "口播文字")
+
+    assert isinstance(result, Ok)
+    assert GENERAL_SYSTEM_PROMPT in seen["system_prompt"]
+    assert "专业的金融分析助理" not in seen["system_prompt"]
 
 
 def test_extractor_parse_failure_keeps_raw():

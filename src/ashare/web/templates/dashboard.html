@@ -186,13 +186,14 @@
   .btn.danger-solid{background:var(--danger);color:#fff;border-color:var(--danger);font-weight:600}
   .btn.danger-solid:hover{background:#dc2626}
 
-  /* 轻量 toast 成功提示 */
+  /* 轻量操作结果提示 */
   .toast{position:fixed;left:50%;bottom:28px;transform:translateX(-50%) translateY(12px);z-index:80;
     background:var(--secondary);border:1px solid var(--border);color:var(--fg);padding:10px 18px;
     border-radius:10px;font-size:13px;opacity:0;pointer-events:none;transition:opacity .2s,transform .2s;
     box-shadow:0 10px 30px rgba(0,0,0,.4)}
   .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
   .toast.ok{border-color:#166534}
+  .toast.err{border-color:#7f1d1d;color:#FCA5A5}
 
   /* 设置表单 */
   .field{margin-bottom:16px}
@@ -221,6 +222,11 @@
   .form-divider{border:0;border-top:1px solid var(--border);margin:22px 0}
   .enabled-field{display:flex;align-items:center;gap:9px;color:var(--fg-dim)}
   .enabled-field input{width:18px;height:18px;accent-color:var(--accent)}
+  .user-danger{margin-top:18px;padding:13px 14px;border:1px solid #7f1d1d;border-radius:10px;
+    background:rgba(127,29,29,.12);display:flex;align-items:center;justify-content:space-between;gap:16px}
+  .user-danger[hidden]{display:none}
+  .user-danger strong{display:block;color:#FCA5A5;font-size:12.5px;margin-bottom:2px}
+  .user-danger span{display:block;color:var(--fg-faint);font-size:11.5px}
 
   .empty{color:var(--fg-faint);text-align:center;padding:60px 20px;font-size:14px}
   .summary-box{background:var(--secondary);border:1px solid var(--border);border-radius:10px;
@@ -234,6 +240,7 @@
     .row .title{max-width:100%}
     .row{grid-template-columns:1fr}
     .stages{justify-content:flex-start}
+    .user-danger{align-items:flex-start;flex-direction:column}
   }
   @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style>
@@ -311,7 +318,7 @@
         <div class="field"><label for="userName">用户昵称</label><input id="userName"></div>
         <div class="field"><label for="userAnalysisType">内容类型</label>
           <select id="userAnalysisType"><option value="financial">金融博主</option><option value="general">通用博主</option></select>
-          <div class="hint">编辑已有用户时，切换类型不会覆盖自定义提示词。</div>
+          <div class="hint">当前为默认提示词时，切换类型会同步替换；手工编辑过的提示词会保留。</div>
         </div>
         <div class="field"><label for="userSystemPrompt">系统提示词</label>
           <textarea id="userSystemPrompt" rows="12"></textarea>
@@ -319,6 +326,10 @@
         </div>
         <div class="field"><label class="enabled-field"><input type="checkbox" id="userEnabled">启用定时与手动拉取</label></div>
         <div class="form-actions"><button class="btn primary" id="userSaveBtn">保存用户</button><span class="save-msg" id="userSaveMsg"></span></div>
+        <div class="user-danger" id="userDanger" hidden>
+          <div><strong>删除当前主播</strong><span>将一并删除该主播的数据库记录和已下载文件。</span></div>
+          <button class="btn danger" id="deleteUserBtn" type="button">删除主播及数据</button>
+        </div>
       </div>
     </div>
     <hr class="form-divider">
@@ -375,6 +386,7 @@ const icons={
 async function fetchJSON(url, opts){const r=await fetch(url, opts);if(!r.ok)throw new Error(r.status);return r.json();}
 
 let users=[], defaultPrompts={}, selectedUserId=null, editingUserId=null, hasEnabledUsers=false;
+let editingAnalysisType="financial";
 async function loadUsers(preferredId=null){
   const data=await fetchJSON("/api/users");
   users=data.users||[]; defaultPrompts=data.default_prompts||{};
@@ -585,11 +597,11 @@ function openConfirm({title,msg,okLabel,onOk}){
 }
 function closeConfirm(){document.getElementById("confirmDialog").classList.remove("open");_confirmOk=null;}
 
-// ===== 轻量成功提示 =====
+// ===== 轻量操作结果提示 =====
 let _toastTimer=null;
-function toast(msg){
+function toast(msg, kind="ok"){
   const t=document.getElementById("toast");
-  t.textContent=msg; t.className="toast ok show";
+  t.textContent=msg; t.className=`toast ${kind} show`;
   clearTimeout(_toastTimer);
   _toastTimer=setTimeout(()=>{t.className="toast";},2500);
 }
@@ -626,12 +638,14 @@ function renderUserForm(user){
   document.getElementById("userSecuid").disabled=!!user;
   document.getElementById("validateSecuid").disabled=!!user;
   document.getElementById("userName").value=user?.name||"";
-  document.getElementById("userAnalysisType").value=user?.analysis_type||"financial";
+  editingAnalysisType=user?.analysis_type||"financial";
+  document.getElementById("userAnalysisType").value=editingAnalysisType;
   document.getElementById("userSystemPrompt").value=user?.system_prompt||defaultPrompts.financial||"";
   document.getElementById("userEnabled").checked=user?.enabled??true;
   document.getElementById("secuidResult").className="";
   document.getElementById("secuidResult").textContent="";
   document.getElementById("userSaveMsg").textContent="";
+  document.getElementById("userDanger").hidden=!user;
 }
 
 function collectUser(){
@@ -654,6 +668,28 @@ async function saveUser(){
     await loadUsers(data.user.id);renderUserForm(data.user);load();
     msg.className="save-msg ok";msg.textContent="已保存 ✓";
   }catch(e){msg.className="save-msg err";msg.textContent="保存失败："+esc(e.message);}
+}
+
+async function deleteUser(userId){
+  const button=document.getElementById("deleteUserBtn");
+  button.disabled=true;
+  try{
+    const response=await fetch(`/api/users/${userId}`,{method:"DELETE"});
+    const data=await response.json();
+    if(!response.ok)throw new Error(data.error||"删除失败");
+    await loadUsers();
+    renderUserForm(users.find(user=>user.id===selectedUserId)||null);
+    load();
+    if(data.file_errors?.length){
+      toast(`用户数据已删除，但有 ${data.file_errors.length} 个本地目录清理失败`,"err");
+    }else{
+      toast(`已删除主播及 ${data.deleted_videos||0} 条视频数据`);
+    }
+  }catch(error){
+    toast("删除失败："+error.message,"err");
+  }finally{
+    button.disabled=false;
+  }
 }
 
 function collectSettings(){
@@ -724,12 +760,23 @@ document.getElementById("newUserBtn").addEventListener("click",()=>renderUserFor
 document.getElementById("userSaveBtn").addEventListener("click",saveUser);
 document.getElementById("validateSecuid").addEventListener("click",validateSecuid);
 document.getElementById("userAnalysisType").addEventListener("change",e=>{
-  if(editingUserId===null)document.getElementById("userSystemPrompt").value=defaultPrompts[e.target.value]||"";
+  const prompt=document.getElementById("userSystemPrompt");
+  const oldDefault=defaultPrompts[editingAnalysisType]||"";
+  if(prompt.value.trim()===oldDefault.trim()){
+    prompt.value=defaultPrompts[e.target.value]||"";
+  }
+  editingAnalysisType=e.target.value;
 });
 document.getElementById("resetUserPrompt").addEventListener("click",()=>openConfirm({
   title:"恢复默认提示词?",msg:"当前自定义系统提示词会被所选内容类型的默认提示词替换。",
   okLabel:"恢复",onOk:()=>{const kind=document.getElementById("userAnalysisType").value;
     document.getElementById("userSystemPrompt").value=defaultPrompts[kind]||"";}}));
+document.getElementById("deleteUserBtn").addEventListener("click",()=>{
+  const user=users.find(item=>item.id===editingUserId);if(!user)return;
+  openConfirm({title:`删除主播「${user.name}」?`,
+    msg:"将永久删除该主播、全部视频处理记录及已下载文件。请先确认外部 ashare schedule 当前未在执行；此操作不可恢复。",
+    okLabel:"删除主播及数据",onOk:()=>deleteUser(user.id)});
+});
 document.getElementById("autoToggle").addEventListener("change",e=>toggleAuto(e.target.checked));
 document.getElementById("clearAllBtn").addEventListener("click",()=>openConfirm({
   title:"清空所有数据?", msg:"将删除全部视频记录与已下载的中间文件（不会删除用户与提示词配置），不可恢复。",

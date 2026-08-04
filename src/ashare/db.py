@@ -27,6 +27,8 @@ from .models import (
     Video,
 )
 
+TRACKED_USERS_INITIALIZED_KEY = "_tracked_users_initialized"
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS videos (
     aweme_id TEXT PRIMARY KEY,
@@ -146,6 +148,7 @@ class Database:
         if "author_name" not in cols:
             self.conn.execute("ALTER TABLE videos ADD COLUMN author_name TEXT DEFAULT ''")
         self._migrate_analysis_columns()
+        self._migrate_tracked_user_prompts()
 
     def _migrate_analysis_columns(self) -> None:
         from .llm.prompts import SYSTEM_PROMPT
@@ -168,6 +171,20 @@ class Database:
             "UPDATE analyses SET system_prompt=? WHERE system_prompt=''",
             (SYSTEM_PROMPT,),
         )
+
+    def _migrate_tracked_user_prompts(self) -> None:
+        """升级旧默认提示词；用户自行编辑过的内容保持不变。"""
+        from .llm.prompts import (
+            GENERAL_SYSTEM_PROMPT,
+            LEGACY_GENERAL_SYSTEM_PROMPTS,
+        )
+
+        for legacy_prompt in LEGACY_GENERAL_SYSTEM_PROMPTS:
+            self.conn.execute(
+                """UPDATE tracked_users SET system_prompt=?, updated_at=?
+                   WHERE analysis_type='general' AND system_prompt=?""",
+                (GENERAL_SYSTEM_PROMPT, self._clock(), legacy_prompt),
+            )
 
     def close(self) -> None:
         self.conn.close()
@@ -449,6 +466,11 @@ class Database:
                VALUES (?,?,?,?,?,?,?)""",
             (sec_uid, name, kind.value, system_prompt, int(enabled), now, now),
         )
+        self.conn.execute(
+            """INSERT INTO settings (key, value) VALUES (?, '1')
+               ON CONFLICT(key) DO UPDATE SET value='1'""",
+            (TRACKED_USERS_INITIALIZED_KEY,),
+        )
         self.conn.commit()
         return self.get_tracked_user(cur.lastrowid)
 
@@ -477,6 +499,31 @@ class Database:
         )
         self.conn.commit()
         return self.get_tracked_user(user_id)
+
+    def delete_tracked_user(
+        self, user_id: int,
+    ) -> tuple[Optional[TrackedUser], list[Video]]:
+        """事务删除用户及其视频链路数据，返回待清理本地目录的视频。"""
+        user = self.get_tracked_user(user_id)
+        if user is None:
+            return None, []
+        videos = self.list_videos(user.sec_uid)
+        dependent_tables = (
+            "stage_runs", "notification_deliveries", "transcripts",
+            "analyses", "opinions",
+        )
+        with self.conn:
+            for table in dependent_tables:
+                self.conn.execute(
+                    f"""DELETE FROM {table} WHERE aweme_id IN
+                        (SELECT aweme_id FROM videos WHERE author_sec_uid=?)""",
+                    (user.sec_uid,),
+                )
+            self.conn.execute(
+                "DELETE FROM videos WHERE author_sec_uid=?", (user.sec_uid,),
+            )
+            self.conn.execute("DELETE FROM tracked_users WHERE id=?", (user_id,))
+        return user, videos
 
     def latest_author_name(self, sec_uid: str) -> str:
         row = self.conn.execute(

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from .config import AppConfig
-from .db import Database
+from .db import Database, TRACKED_USERS_INITIALIZED_KEY
 from .llm.prompts import SYSTEM_PROMPT
 from .models import AnalysisType, TrackedUser
 
@@ -11,11 +11,15 @@ from .models import AnalysisType, TrackedUser
 def ensure_initial_tracked_user(
     db: Database, cfg: AppConfig, *, default_prompt: str = SYSTEM_PROMPT,
 ) -> TrackedUser | None:
-    """用户表为空时把旧单用户配置迁入数据库；之后不再覆盖。"""
+    """首次启动时迁移旧单用户配置；显式删空后不再自动创建。"""
+    settings = db.get_settings()
     users = db.list_tracked_users()
     if users:
+        if settings.get(TRACKED_USERS_INITIALIZED_KEY) != "1":
+            db.set_settings({TRACKED_USERS_INITIALIZED_KEY: "1"})
         return users[0]
-    settings = db.get_settings()
+    if settings.get(TRACKED_USERS_INITIALIZED_KEY) == "1":
+        return None
     sec_uid = (settings.get("author_sec_uid") or cfg.douyin.author_sec_uid).strip()
     if not sec_uid.startswith("MS4w"):
         return None

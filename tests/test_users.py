@@ -48,3 +48,16 @@ def test_initial_user_is_idempotent_and_keeps_custom_prompt():
     assert second.analysis_type == AnalysisType.GENERAL
     assert second.system_prompt == "用户自定义提示词"
     assert len(db.list_tracked_users()) == 1
+
+
+def test_deleted_last_user_is_not_recreated_from_legacy_config():
+    from ashare.users import ensure_initial_tracked_user
+
+    db = Database(":memory:", clock=lambda: 1000)
+    first = ensure_initial_tracked_user(db, _cfg())
+
+    db.delete_tracked_user(first.id)
+    recreated = ensure_initial_tracked_user(db, _cfg("MS4w_changed"))
+
+    assert recreated is None
+    assert db.list_tracked_users() == []

@@ -15,12 +15,7 @@ from typing import Protocol
 from ..config import LLMConfig
 from ..models import Analysis, AnalysisType, Opinion, Stance, TargetType
 from ..result import Err, Ok, Result
-from .prompts import (
-    SYSTEM_PROMPT,
-    build_user_prompt,
-    default_system_prompt,
-    output_contract,
-)
+from .prompts import build_user_prompt, default_system_prompt, output_contract
 
 logger = logging.getLogger("ashare.llm")
 
@@ -147,13 +142,20 @@ class LLMExtractor:
         self, cfg: LLMConfig, client=None,
         primary: TextGenerationBackend | None = None,
         analysis_type: AnalysisType = AnalysisType.FINANCIAL,
-        system_prompt: str = SYSTEM_PROMPT,
+        system_prompt: str | None = None,
     ):
         self._cfg = cfg
         self._client = client  # 可注入假 client 测试
         self._primary = primary
         self._analysis_type = AnalysisType(analysis_type)
-        self._system_prompt = _effective_prompt(system_prompt, self._analysis_type)
+        configured_prompt = (
+            system_prompt
+            if system_prompt is not None
+            else default_system_prompt(self._analysis_type)
+        )
+        self._system_prompt = _effective_prompt(
+            configured_prompt, self._analysis_type,
+        )
 
     def _ensure_client(self):
         if self._client is None:
@@ -227,8 +229,8 @@ def _build_analysis(
     user_prompt: str,
     raw: str,
     parsed: Result[ParsedAnalysis, str],
-    analysis_type: AnalysisType = AnalysisType.FINANCIAL,
-    system_prompt: str = SYSTEM_PROMPT,
+    analysis_type: AnalysisType,
+    system_prompt: str,
 ) -> Analysis:
     analysis = Analysis(
         aweme_id=aweme_id, llm_model=model_name,
