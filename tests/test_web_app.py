@@ -385,6 +385,20 @@ def test_dashboard_contains_user_selector_and_prompt_editor():
     assert 'user_id=' in html
 
 
+def test_settings_drawer_separates_users_and_runtime_with_accessible_tabs():
+    html = (Path(__file__).parents[1] / "src/ashare/web/templates/dashboard.html").read_text()
+
+    assert 'role="tablist" aria-label="设置分类"' in html
+    assert 'id="settingsTabUsers"' in html
+    assert 'aria-controls="settingsPanelUsers"' in html
+    assert 'id="settingsTabRuntime"' in html
+    assert 'aria-controls="settingsPanelRuntime"' in html
+    assert 'data-settings-panel="users"' in html
+    assert 'data-settings-panel="runtime" hidden' in html
+    assert "handleSettingsTabKeydown" in html
+    assert 'event.key==="ArrowRight"' in html
+
+
 def test_dashboard_conditionally_renders_video_duration():
     html = (Path(__file__).parents[1] / "src/ashare/web/templates/dashboard.html").read_text()
 
